@@ -140,13 +140,15 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
       const enriched = [];
       for (const att of message.attachments) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const raw = att as unknown as Record<string, unknown>;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const entry: Record<string, any> = {
           type: att.type,
           name: att.name,
           mimeType: att.mimeType,
           size: att.size,
-          width: (att as unknown as Record<string, unknown>).width,
-          height: (att as unknown as Record<string, unknown>).height,
+          width: raw.width,
+          height: raw.height,
         };
         if (att.fetchData) {
           try {
@@ -154,6 +156,23 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
             entry.data = buffer.toString('base64');
           } catch (err) {
             log.warn('Failed to download attachment', { type: att.type, err });
+          }
+        } else if (typeof raw.url === 'string' && raw.url) {
+          // Some adapters (e.g. Discord) expose a URL instead of fetchData.
+          // Download on the host now before the CDN link expires.
+          try {
+            const res = await fetch(raw.url);
+            if (res.ok) {
+              const buf = Buffer.from(await res.arrayBuffer());
+              entry.data = buf.toString('base64');
+              if (!entry.mimeType) {
+                entry.mimeType = res.headers.get('content-type')?.split(';')[0].trim() || undefined;
+              }
+            } else {
+              log.warn('Failed to download attachment via URL', { type: att.type, status: res.status, url: raw.url });
+            }
+          } catch (err) {
+            log.warn('Failed to download attachment via URL', { type: att.type, err });
           }
         }
         enriched.push(entry);

@@ -6,6 +6,19 @@
  */
 import path from 'path';
 
+// Node.js v22 Happy Eyeballs v2 (undici) tries IPv6 in parallel with IPv4.
+// On this host IPv6 external routing is broken, causing all fetch() calls to
+// api.telegram.org (and similar dual-stack hosts) to fail with AggregateError.
+// Force all fetch to connect only on IPv4 via the global undici dispatcher.
+import { setGlobalDispatcher, Agent } from 'undici';
+// Force undici (Node.js v22 fetch) to connect over IPv4 only.
+// This host has ULA IPv6 addresses assigned but no working external IPv6 routing;
+// undici's Happy Eyeballs v2 races both families and the IPv6 ENETUNREACH poisons
+// the aggregate result before the IPv4 connection can succeed.
+// `connect.family` is valid at runtime; undici types incorrectly require `port`.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+setGlobalDispatcher(new Agent({ connect: { family: 4 } as any }));
+
 import { backfillContainerConfigs } from './backfill-container-configs.js';
 import { DATA_DIR } from './config.js';
 import { enforceStartupBackoff, resetCircuitBreaker } from './circuit-breaker.js';

@@ -10,9 +10,11 @@ import path from 'path';
 import { OneCLI } from '@onecli-sh/sdk';
 
 import {
+  CONTAINER_DNS,
   CONTAINER_IMAGE,
   CONTAINER_IMAGE_BASE,
   CONTAINER_INSTALL_LABEL,
+  CONTAINER_NETWORK,
   DATA_DIR,
   GROUPS_DIR,
   ONECLI_API_KEY,
@@ -320,6 +322,12 @@ function buildMounts(
     mounts.push({ hostPath: skillsSrc, containerPath: '/app/skills', readonly: true });
   }
 
+  // Projects directory — read-write access for agent code work
+  const projectsDir = '/home/george/projects';
+  if (fs.existsSync(projectsDir)) {
+    mounts.push({ hostPath: projectsDir, containerPath: '/workspace/projects', readonly: false });
+  }
+
   // Additional mounts from container config
   if (containerConfig.additionalMounts && containerConfig.additionalMounts.length > 0) {
     const validated = validateAdditionalMounts(containerConfig.additionalMounts, agentGroup.name);
@@ -406,6 +414,11 @@ async function buildContainerArgs(
   agentIdentifier?: string,
 ): Promise<string[]> {
   const args: string[] = ['run', '--rm', '--name', containerName, '--label', CONTAINER_INSTALL_LABEL];
+
+  args.push('--network', CONTAINER_NETWORK);
+  args.push('--dns', CONTAINER_DNS);
+  args.push('-e', 'NO_PROXY=.home');
+  args.push('-e', 'no_proxy=.home');
 
   // Environment — only vars read by code we don't own.
   // Everything NanoClaw-specific is in container.json (read by runner at startup).
