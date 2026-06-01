@@ -51,10 +51,20 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         git \
         tini \
         unzip \
+        python3 \
+        python3-pip \
     && if [ "$INSTALL_CJK_FONTS" = "true" ]; then \
         apt-get install -y --no-install-recommends fonts-noto-cjk; \
        fi \
     && rm -rf /var/lib/apt/lists/*
+
+# ---- Python dependencies for nutri skill -----
+RUN pip3 install --no-cache-dir --break-system-packages \
+    httpx>=0.25.0 \
+    anthropic>=0.32.0 \
+    pydantic>=2.0.0 \
+    pytz>=2023.3 \
+    python-dotenv>=1.0.0
 
 # Chromium path for agent-browser / Playwright consumers
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
