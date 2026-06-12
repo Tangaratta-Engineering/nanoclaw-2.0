@@ -197,6 +197,20 @@ Four types of skills. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full taxono
 - **Operational skills** — instruction-only workflows (`/setup`, `/debug`, `/customize`, `/init-first-agent`, `/manage-channels`, `/init-onecli`, `/update-nanoclaw`).
 - **Container skills** — loaded inside agent containers at runtime (`container/skills/`: `onecli-gateway`, `welcome`, `self-customize`, `agent-browser`, `slack-formatting`).
 
+### Agent-created (workspace) skills
+
+Agents create skills by writing a `SKILL.md` (and any supporting files) into their group workspace: `groups/<folder>/<skill-name>/`. Inside the container this is `/workspace/agent/<skill-name>/`. These files are persistent and are **not** committed to the repo.
+
+For a workspace skill to appear as a Claude Code slash command it needs a symlink in `.claude-shared/skills/` pointing to the workspace path:
+
+```
+data/v2-sessions/<group-id>/.claude-shared/skills/<skill-name>  →  /workspace/agent/<skill-name>
+```
+
+`syncSkillSymlinks` in `src/container-runner.ts` currently only wires shared container skills (`container/skills/`). It needs to be extended to also scan `groups/<folder>/` for subdirectories containing a `SKILL.md` and create the corresponding symlinks (target: `/workspace/agent/<name>`) alongside the shared-skill symlinks.
+
+**Do not** write workspace skill files to `/home/node/.claude/skills/` directly — that directory is `.claude-shared/skills/` on the host and contains only symlinks managed by `syncSkillSymlinks`. Writing there directly creates files that will be swept away or conflict with the symlink manager.
+
 | Skill | When to Use |
 |-------|-------------|
 | `/setup` | First-time install, auth, service config |
