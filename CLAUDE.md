@@ -78,9 +78,17 @@ For ad-hoc queries from skills or scripts, use the in-tree wrapper rather than t
 | `src/db/` | DB layer — agent_groups, messaging_groups, sessions, container_configs, user_roles, user_dms, pending_*, migrations |
 | `src/channels/` | Channel adapter infra (registry, Chat SDK bridge); specific channel adapters are skill-installed from the `channels` branch |
 | `src/providers/` | Host-side provider container-config (`claude` baked in; `opencode` etc. installed from the `providers` branch) |
+| `src/templates/` | Agent template system — `parse.ts` reads a local template folder, `create-agent.ts` stamps it into a new agent group (persona, MCP servers, skills; no secrets, no provider). See [docs/templates.md](docs/templates.md) |
+| `src/group-persona.ts` | Provider-neutral per-group persona file (`instructions.prepend.md`) that a template stamps; every provider's project-doc composer inlines it at the top of its generated doc |
+| `src/group-skills.ts` | Copies template-stamped skills into a provider's per-group skills directory, for providers that don't read Claude's shared `.claude-shared` store |
+| `src/inbox-safety.ts` | `ensureContainedInboxDir` — shared symlink-containment guard for per-message inbox dirs, used by both channel-inbound attachments and agent-to-agent forwarded files |
+| `src/modules/agent-to-agent/message-gate.ts` + `db/agent-message-policies.ts` | Per-pair agent-to-agent approval gating, managed via `ncl policies` (`src/cli/resources/policies.ts`). `agent-route.ts` holds a message when a policy matches; `message-gate.ts` is the approval handler that re-routes it on approve |
 | `container/agent-runner/src/` | Agent-runner: poll loop, formatter, provider abstraction, MCP tools, destinations |
+| `container/agent-runner/src/memory-scaffold.ts` | Boots a persistent `/workspace/agent` memory tree (templated `definition.md`/`index.md`) for providers that opt in via `usesMemoryScaffold`; idempotent, provider-agnostic |
+| `container/cli-tools.json` + `container/install-cli-tools.sh` | Data-driven manifest of global CLI installs baked into the agent image (vercel, agent-browser, claude-code); add a tool by editing the JSON, not the Dockerfile |
 | `container/skills/` | Container skills mounted into every agent session (`onecli-gateway`, `welcome`, `self-customize`, `agent-browser`, `slack-formatting`) |
 | `groups/<folder>/` | Per-agent-group filesystem (CLAUDE.md, skills, per-group `agent-runner-src/` overlay) |
+| `setup/providers/` | Setup-side provider registry (`registry.ts`) mirroring the host/container provider registries — drives the provider picker and the standalone `provider-auth` step |
 | `scripts/init-first-agent.ts` | Bootstrap the first DM-wired agent (used by `/init-first-agent` skill) |
 | `migrate-v2.sh` + `setup/migrate-v2/` | v1→v2 migration. Standalone script: `bash migrate-v2.sh`. Seeds DB, copies groups/sessions, installs channels, builds container, offers service switchover, then hands off to `/migrate-from-v1` skill for owner setup and CLAUDE.md cleanup. See [docs/migration-dev.md](docs/migration-dev.md). |
 | `nanoclaw.sh --uninstall` + `setup/uninstall/` | Uninstall this copy only (slug-scoped): service, containers + image, `data/`, `logs/`, `groups/`, this copy's OneCLI agents. Confirms per group; `--dry-run` previews, `--yes` skips prompts. Other copies and the shared OneCLI app are untouched. Bypasses bootstrap entirely; `uninstall.sh` is a pointer that execs it. |
@@ -108,6 +116,7 @@ ncl help
 | user-dms | list | Cold-DM cache (read-only) |
 | dropped-messages | list | Messages from unregistered senders (read-only) |
 | approvals | list, get | Pending approval requests (read-only) |
+| policies | list, set, remove | Agent-to-agent approval gates (`agent_message_policies`) — a row forces human approval for every message from one agent group to another. `set`/`remove` require approval; directed and per-pair |
 
 Key files: `src/cli/dispatch.ts` (dispatcher + approval handler), `src/cli/crud.ts` (generic CRUD registration), `src/cli/resources/` (per-resource definitions).
 
@@ -119,6 +128,10 @@ Trunk does not ship any specific channel adapter or non-default agent provider. 
 - **`providers` branch** — OpenCode (and any future non-default agent providers). Installed via `/add-opencode`.
 
 Each `/add-<name>` skill is idempotent: `git fetch origin <branch>` → copy module(s) into the standard paths → append a self-registration import to the relevant barrel → `pnpm install <pkg>@<pinned-version>` → build.
+
+### Switching an agent group's provider
+
+An installed provider can be swapped on a live agent group as an operator action: `ncl groups config update --id <group-id> --provider <name>` + `ncl groups restart --id <group-id>`. NanoClaw doesn't migrate anything automatically — provider-specific state (memory, in-flight context) stays with its provider. Carrying memory across is a separate, explicit step: `/migrate-memory`. See [docs/provider-migration.md](docs/provider-migration.md).
 
 ## Self-Modification
 
