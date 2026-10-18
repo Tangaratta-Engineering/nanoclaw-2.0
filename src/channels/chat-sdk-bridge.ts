@@ -328,6 +328,16 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         // short to fit Telegram's 64-byte callback_data cap). Old format:
         // the full value is embedded in actionId/value directly.
         const selectedOption = resolveSelectedOption(render, event.value, tail);
+        log.info('Button click', {
+          path: 'chat-sdk',
+          actionId: event.actionId,
+          eventValue: event.value,
+          questionId,
+          renderFound: !!render,
+          optionValues: render?.options.map((o) => o.value),
+          selectedOption,
+          userId,
+        });
         const title = render?.title ?? '❓ Question';
         const matched = render?.options.find((o) => o.value === selectedOption);
         const selectedLabel = matched?.selectedLabel ?? selectedOption ?? '(clicked)';
@@ -689,6 +699,16 @@ async function handleForwardedEvent(
       // Discord custom_id mirrors the new index-based encoding (see Button
       // construction). Decode back to the real option value for downstream.
       const selectedOption = resolveSelectedOption(render, tail, tail);
+      log.info('Button click', {
+        path: 'discord-interaction',
+        customId,
+        questionId,
+        tail,
+        renderFound: !!render,
+        optionValues: render?.options.map((o) => o.value),
+        selectedOption,
+        userId: user?.id,
+      });
       const cardTitle = render?.title ?? ((originalEmbeds[0]?.title as string) || '❓ Question');
       const matchedOpt = render?.options.find((o) => o.value === selectedOption);
       const selectedLabel = matchedOpt?.selectedLabel ?? selectedOption ?? customId;
