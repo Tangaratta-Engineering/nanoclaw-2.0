@@ -36,3 +36,25 @@ registerChannelAdapter('discord', {
     });
   },
 });
+
+// Optional second Discord bot (own identity/DM), keyed as instance "timmy".
+// Absent DISCORD_TIMMY_* vars ⇒ not registered; the default bot is unaffected.
+registerChannelAdapter('discord-timmy', {
+  factory: () => {
+    const env = readEnvFile(['DISCORD_TIMMY_BOT_TOKEN', 'DISCORD_TIMMY_PUBLIC_KEY', 'DISCORD_TIMMY_APPLICATION_ID']);
+    if (!env.DISCORD_TIMMY_BOT_TOKEN) return null;
+    const discordAdapter = createDiscordAdapter({
+      botToken: env.DISCORD_TIMMY_BOT_TOKEN,
+      publicKey: env.DISCORD_TIMMY_PUBLIC_KEY,
+      applicationId: env.DISCORD_TIMMY_APPLICATION_ID,
+    });
+    return createChatSdkBridge({
+      adapter: discordAdapter,
+      instance: 'timmy',
+      concurrency: 'concurrent',
+      botToken: env.DISCORD_TIMMY_BOT_TOKEN,
+      extractReplyContext,
+      supportsThreads: true,
+    });
+  },
+});
