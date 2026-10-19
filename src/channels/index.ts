@@ -8,4 +8,5 @@
 
 import './cli.js';
 import './discord.js';
+import './discord-timmy.js'; // local customization — see docs/local-customizations.md
 import './telegram.js';
