@@ -5,6 +5,7 @@ import { qualifiesForDefaultAgent } from './default-agent.js';
 
 function event(over: {
   text?: string;
+  attachments?: unknown[];
   isBot?: boolean;
   threadId?: string | null;
   isMention?: boolean;
@@ -27,6 +28,7 @@ function event(over: {
       isGroup: over.isGroup ?? true,
       content: JSON.stringify({
         text: over.text ?? 'what is on my calendar today?',
+        attachments: over.attachments,
         author: { userId: 'u1', isBot: over.isBot ?? false },
       }),
     },
@@ -37,6 +39,21 @@ describe('qualifiesForDefaultAgent', () => {
   it('claims a plain channel-level message with no handle', () => {
     expect(qualifiesForDefaultAgent(event({}))).toBe(true);
     expect(qualifiesForDefaultAgent(event({ threadId: null }))).toBe(true);
+  });
+
+  it('claims an attachment-only message (a Discord voice message has no text)', () => {
+    const voice = { type: 'audio', name: 'voice-message.ogg', mimeType: 'audio/ogg' };
+    expect(qualifiesForDefaultAgent(event({ text: '', attachments: [voice] }))).toBe(true);
+    expect(qualifiesForDefaultAgent(event({ text: '   ', attachments: [voice], threadId: null }))).toBe(true);
+  });
+
+  it('still ignores a message with neither text nor attachments, and attachment messages that are addressed or in threads', () => {
+    expect(qualifiesForDefaultAgent(event({ text: '', attachments: [] }))).toBe(false);
+    expect(qualifiesForDefaultAgent(event({ text: '<@999>', attachments: [{ type: 'audio' }] }))).toBe(false);
+    expect(
+      qualifiesForDefaultAgent(event({ text: '', attachments: [{ type: 'audio' }], threadId: 'discord:1:2:3' })),
+    ).toBe(false);
+    expect(qualifiesForDefaultAgent(event({ text: '', attachments: [{ type: 'audio' }], isBot: true }))).toBe(false);
   });
 
   it('leaves messages that already mention the bot to normal routing', () => {
