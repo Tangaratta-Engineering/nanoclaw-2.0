@@ -28,6 +28,7 @@ the fork is public.
 | 4 | **Fix** — Discord button clicks mis-decoded (`ncq:<id>:<idx>\n<value>` read as `"0\n0"`): approvals looked rejected, cards showed `0`. Bug in the bridge vs `@chat-adapter/discord` 4.29.0's newline-delimited `custom_id`; still present in upstream `main` | `src/channels/chat-sdk-bridge.ts` (`parseDiscordCustomId`, raw interaction handler), `src/channels/chat-sdk-bridge.test.ts` | Will conflict if upstream rewrites that handler. Keep upstream's version only if it strips the `\n<value>` suffix (the tests here fail otherwise); else re-apply `parseDiscordCustomId`. Candidate to send upstream. |
 | 5 | Shared agent base prompt no longer contains a persona line | `container/CLAUDE.md` | Re-apply: persona belongs in each group's own `CLAUDE.local.md`, not in the base prompt every agent inherits. |
 | 6 | `pnpm run chat --to <channelType>:<platformId>` admin injection; Remote Control (phone admin session) unit and docs | `scripts/chat.ts`, `systemd/claude-rc.service`, `CLAUDE.md` (Remote Control section) | `CLAUDE.md` will conflict textually — keep both sides. |
+| 7 | **Default agent for un-addressed channel messages**: a message with no @handle, at channel level (not in a thread), from a non-bot, in a wired chat, is re-injected as a mention of the default bot so its agent handles it (then delegates per its rules) | `src/channels/default-agent.ts`, `src/channels/default-agent.test.ts`, one import line in `src/channels/index.ts` | Merges cleanly (isolated). Relies on `registerMessageInterceptor` + `routeInbound` in `src/router.ts` and the wiring being `mention-sticky`; the tests guard the loop/thread/other-bot exclusions. After upgrade check those two router exports still exist. |
 
 ### Older customizations (predate the above)
 
@@ -41,10 +42,9 @@ branch already ports these to the new DB API — prefer its resolutions.
 
 - `.env` — bot tokens and ids for both Discord bots (`DISCORD_*`, `DISCORD_TIMMY_*`, `*_MENTION_ROLE_IDS`),
   OneCLI settings. Never commit.
-- `data/v2.db` — agent groups, messaging groups, wirings, destinations (including agent-to-agent and the
+- `data/v2.db` — agent groups, messaging groups, wirings (the #general wirings are `mention-sticky`; keep it that way — the default-agent rule depends on it), destinations (including agent-to-agent and the
   `*-main` channel-level destinations), members, roles, container configs (model, effort, MCP servers).
-- `groups/<folder>/` (gitignored) — each agent's `CLAUDE.local.md` (persona, rules, visibility and
-  loop-guard rules), skills, and `.claude/agents/*` (for example a model-pinned flight-planner subagent).
+- `groups/<folder>/` (gitignored) — each agent's `CLAUDE.local.md` (persona, the delegation/handoff protocol between the two agents with its criteria and hop limit, visibility rules), skills, and `.claude/agents/*` (for example a model-pinned flight-planner subagent).
 - Agent memory: `data/v2-sessions/<agent-group>/.claude-shared/projects/-workspace-agent/memory`. One
   agent's memory directory is a **symlink** into another's via the `/workspace/projects` mount, so it only
   resolves inside a container. If an upgrade changes or removes that mount, re-create the link or copy.
