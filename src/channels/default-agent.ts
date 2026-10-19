@@ -16,6 +16,8 @@
  *     agent was mentioned there; the other bot's threads must stay its own);
  *   - its text contains no Discord mention at all (`<@…>` / `<@&…>`) — so anything
  *     addressed to another bot, by user or role mention, is left to that bot;
+ *   - it has text OR an attachment (a Discord voice message has NO text, only an audio
+ *     attachment — it must not be dropped);
  *   - its author is not a bot (never react to bot posts: avoids agent loops).
  */
 import { getMessagingGroupWithAgentCount } from '../db/messaging-groups.js';
@@ -37,7 +39,7 @@ export function qualifiesForDefaultAgent(event: InboundEvent): boolean {
   if (event.message.isMention === true) return false;
   if (event.message.isGroup !== true) return false;
   if (!isChannelLevel(event.threadId)) return false;
-  let parsed: { text?: unknown; author?: { isBot?: unknown } };
+  let parsed: { text?: unknown; attachments?: unknown; author?: { isBot?: unknown } };
   try {
     parsed = JSON.parse(event.message.content);
   } catch {
@@ -45,7 +47,8 @@ export function qualifiesForDefaultAgent(event: InboundEvent): boolean {
   }
   if (parsed.author?.isBot === true) return false;
   const text = typeof parsed.text === 'string' ? parsed.text : '';
-  if (text.trim().length === 0) return false;
+  const hasAttachments = Array.isArray(parsed.attachments) && parsed.attachments.length > 0;
+  if (text.trim().length === 0 && !hasAttachments) return false;
   if (text.includes('<@')) return false;
   return true;
 }
