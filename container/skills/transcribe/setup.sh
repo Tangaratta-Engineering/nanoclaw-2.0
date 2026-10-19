@@ -2,11 +2,11 @@
 # One-time host setup for the transcribe skill: installs pinned faster-whisper into
 # ~/projects/.nanoclaw-tools/whisper (visible to agents at /workspace/projects/...) using the
 # agent image's own Python (so binary wheels match), then downloads a Whisper model.
-# Usage: container/skills/transcribe/setup.sh [model ...]   (tiny|base|small|medium; default: base small)
+# Usage: container/skills/transcribe/setup.sh [model ...]   (tiny|base|small|medium; default: small)
 set -euo pipefail
 
 MODELS=("$@")
-[ ${#MODELS[@]} -eq 0 ] && MODELS=(base small)
+[ ${#MODELS[@]} -eq 0 ] && MODELS=(small)
 SKILL_DIR="$(cd "$(dirname "$0")" && pwd)"
 TOOLS_ROOT="${NANOCLAW_TOOLS_DIR:-$HOME/projects/.nanoclaw-tools}"
 IMAGE="${NANOCLAW_AGENT_IMAGE:-nanoclaw-agent:latest}"
