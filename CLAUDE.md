@@ -273,6 +273,10 @@ This project uses pnpm with `minimumReleaseAge: 4320` (3 days) in `pnpm-workspac
 - **`onlyBuiltDependencies`**: Never add packages to this list without human approval — build scripts execute arbitrary code during install.
 - **`pnpm install --frozen-lockfile`** should be used in CI, automation, and container builds. Never run bare `pnpm install` in those contexts.
 
+## Local customizations (this fork)
+
+This install carries changes that are not upstream. **Before any `/update-nanoclaw` or `/update-skills`, read [docs/local-customizations.md](docs/local-customizations.md)** — it lists each change, its files, and exactly how to resolve it on upgrade. Never edit skill-installed channel adapters in place (`src/channels/discord.ts` etc.); they are overwritten on upgrade. Put customizations in a separate file and import it from the `src/channels/index.ts` barrel.
+
 ## Docs Index
 
 | Doc | Purpose |
@@ -294,6 +298,7 @@ This project uses pnpm with `minimumReleaseAge: 4320` (3 days) in `pnpm-workspac
 | [docs/skills-model.md](docs/skills-model.md) | The skills model in full: recipes, tests, upgrades, migrations |
 | [docs/skill-guidelines.md](docs/skill-guidelines.md) | Authoritative checklist for writing a skill |
 | [docs/templates.md](docs/templates.md) | Agent templates: what they are, stamping via `ncl groups create --template` + the setup wizard, the OneCLI/MCP-credential model, supported providers, and how to contribute one |
+| [docs/local-customizations.md](docs/local-customizations.md) | This fork's changes vs upstream, what to do with each on upgrade, non-git state to back up, upgrade checklist |
 
 ## Container Build Cache
 
