@@ -29,6 +29,7 @@ the fork is public.
 | 5 | Shared agent base prompt no longer contains a persona line | `container/CLAUDE.md` | Re-apply: persona belongs in each group's own `CLAUDE.local.md`, not in the base prompt every agent inherits. |
 | 6 | `pnpm run chat --to <channelType>:<platformId>` admin injection; Remote Control (phone admin session) unit and docs | `scripts/chat.ts`, `systemd/claude-rc.service`, `CLAUDE.md` (Remote Control section) | `CLAUDE.md` will conflict textually — keep both sides. |
 | 7 | **Default agent for un-addressed channel messages**: a message with no @handle, at channel level (not in a thread), from a non-bot, in a wired chat, is re-injected as a mention of the default bot so its agent handles it (then delegates per its rules) | `src/channels/default-agent.ts`, `src/channels/default-agent.test.ts`, one import line in `src/channels/index.ts` | Merges cleanly (isolated). Relies on `registerMessageInterceptor` + `routeInbound` in `src/router.ts` and the wiring being `mention-sticky`; the tests guard the loop/thread/other-bot exclusions. After upgrade check those two router exports still exist. |
+| 8 | **`transcribe` container skill** — local, offline, free speech-to-text for voice messages and audio files (faster-whisper on CPU; default model `base`, `small` for accuracy). Agents get an always-on `instructions.md` fragment and run `/app/skills/transcribe/scripts/transcribe <file>` | `container/skills/transcribe/` (new files only: `SKILL.md`, `instructions.md`, `scripts/`, `setup.sh`, `requirements.lock`) | Merges cleanly (new directory); conflicts only if upstream ships its own skill with this name. The packages and models live **outside the repo and image**, so an image rebuild changes nothing — but if an upgrade changes the image's Python version or architecture, re-run `container/skills/transcribe/setup.sh` (binary wheels). Depends on the `/workspace/projects` mount and `ffmpeg`/`python3`+`pip3` in the image. |
 
 ### Older customizations (predate the above)
 
@@ -44,10 +45,11 @@ branch already ports these to the new DB API — prefer its resolutions.
   OneCLI settings. Never commit.
 - `data/v2.db` — agent groups, messaging groups, wirings (the #general wirings are `mention-sticky`; keep it that way — the default-agent rule depends on it), destinations (including agent-to-agent and the
   `*-main` channel-level destinations), members, roles, container configs (model, effort, MCP servers).
-- `groups/<folder>/` (gitignored) — each agent's `CLAUDE.local.md` (persona, the delegation/handoff protocol between the two agents with its criteria and hop limit, visibility rules), skills, and `.claude/agents/*` (for example a model-pinned flight-planner subagent).
+- `groups/<folder>/` (gitignored) — each agent's `CLAUDE.local.md` (persona, the delegation/handoff protocol between the two agents with its criteria and hop limit, visibility rules; handoff context includes the audio transcript since files are not forwarded), skills, and `.claude/agents/*` (for example a model-pinned flight-planner subagent).
 - Agent memory: `data/v2-sessions/<agent-group>/.claude-shared/projects/-workspace-agent/memory`. One
   agent's memory directory is a **symlink** into another's via the `/workspace/projects` mount, so it only
   resolves inside a container. If an upgrade changes or removes that mount, re-create the link or copy.
+- `~/projects/.nanoclaw-tools/whisper/` — packages (`site/`) and Whisper models (`models/`) for the `transcribe` skill; rebuild with `container/skills/transcribe/setup.sh` (about 0.9 GB for `base` + `small`).
 - OneCLI vault (agents, secrets) and `~/.config/nanoclaw/mount-allowlist.json`.
 
 Agent identifiers must satisfy OneCLI: 1–50 chars, start with a **letter**, lowercase letters, digits and
