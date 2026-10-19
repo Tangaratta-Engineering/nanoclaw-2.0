@@ -80,8 +80,11 @@ function resolveRouting(
     // If the destination is the same channel the session is bound to,
     // preserve the thread_id so replies land in the correct thread.
     const session = getSessionRouting();
+    // Destinations named `*-main` always post at channel level (no thread).
     const threadId =
-      session.channel_type === dest.channelType && session.platform_id === dest.platformId ? session.thread_id : null;
+      !to.endsWith('-main') && session.channel_type === dest.channelType && session.platform_id === dest.platformId
+        ? session.thread_id
+        : null;
     return {
       channel_type: dest.channelType!,
       platform_id: dest.platformId!,

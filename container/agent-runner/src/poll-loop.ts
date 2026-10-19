@@ -649,10 +649,12 @@ function sendToDestination(dest: DestinationEntry, body: string, routing: Routin
   // that came from this same channel+platform. In agent-shared sessions,
   // different destinations have different thread contexts — using a single
   // routing.threadId would stamp one channel's thread onto another.
-  const destRouting = resolveDestinationThread(channelType, platformId);
+  // Destinations named `*-main` always post at channel level (no thread).
+  const channelLevel = dest.name.endsWith('-main');
+  const destRouting = channelLevel ? null : resolveDestinationThread(channelType, platformId);
   writeMessageOut({
     id: generateId(),
-    in_reply_to: destRouting?.inReplyTo ?? routing.inReplyTo,
+    in_reply_to: destRouting?.inReplyTo ?? (channelLevel ? null : routing.inReplyTo),
     kind: 'chat',
     platform_id: platformId,
     channel_type: channelType,
