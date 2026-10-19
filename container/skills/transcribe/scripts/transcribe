@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Wrapper: runs transcribe.py with the container's Python. See SKILL.md.
+HOME_DIR="${WHISPER_HOME:-/workspace/projects/.nanoclaw-tools/whisper}"
+if [ ! -d "$HOME_DIR/site/faster_whisper" ]; then
+  echo "transcribe: speech-to-text is not installed on this host." >&2
+  echo "Ask George to run container/skills/transcribe/setup.sh on the host (one-time, free, local)." >&2
+  exit 3
+fi
+exec python3 "$(dirname "$0")/transcribe.py" "$@"
