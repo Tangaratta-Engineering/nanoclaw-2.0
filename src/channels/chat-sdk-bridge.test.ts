@@ -2,10 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Adapter, AdapterPostableMessage, RawMessage } from 'chat';
 
-import { createChatSdkBridge, splitForLimit } from './chat-sdk-bridge.js';
+import {
+  createChatSdkBridge,
+  handleForwardedEvent,
+  parseDiscordCustomId,
+  resolveSelectedOption,
+  splitForLimit,
+} from './chat-sdk-bridge.js';
+import { getAskQuestionRender } from '../db/sessions.js';
 
 vi.mock('../webhook-server.js', () => ({
   registerWebhookAdapter: vi.fn(),
+}));
+
+vi.mock('../db/sessions.js', () => ({
+  getAskQuestionRender: vi.fn(),
 }));
 
 function stubAdapter(partial: Partial<Adapter>): Adapter {
@@ -348,5 +359,85 @@ describe('createChatSdkBridge.deliver — display cards (send_card)', () => {
     expect(calls).toHaveLength(1);
     const msg = calls[0].message as { markdown?: string };
     expect(msg.markdown).toBe('plain hello');
+  });
+});
+
+describe('parseDiscordCustomId', () => {
+  it('strips the adapter\'s "\\n<value>" suffix so the index decodes (regression: card showed "0 / 0", click read as reject)', () => {
+    expect(parseDiscordCustomId('ncq:appr-1-abc:0\n0')).toEqual({ questionId: 'appr-1-abc', tail: '0', value: '0' });
+    expect(parseDiscordCustomId('ncq:nsa-9-xyz:1\n1')).toEqual({ questionId: 'nsa-9-xyz', tail: '1', value: '1' });
+  });
+
+  it('still parses legacy ids without the value suffix', () => {
+    expect(parseDiscordCustomId('ncq:q1:2')).toEqual({ questionId: 'q1', tail: '2', value: undefined });
+  });
+
+  it('ignores ids that are not ours', () => {
+    expect(parseDiscordCustomId('other:thing')).toEqual({ value: undefined });
+    expect(parseDiscordCustomId(undefined)).toEqual({});
+    expect(parseDiscordCustomId('ncq:noindex')).toEqual({ value: undefined });
+  });
+});
+
+describe('Discord button click handling (raw interaction)', () => {
+  const render = {
+    title: 'CLI: groups-config-update',
+    options: [
+      { label: 'Approve', selectedLabel: '✅ Approved', value: 'approve' },
+      { label: 'Reject', selectedLabel: '❌ Rejected', value: 'reject' },
+    ],
+  };
+
+  function click(customId: string): string {
+    return JSON.stringify({
+      type: 'GATEWAY_INTERACTION_CREATE',
+      data: {
+        type: 3,
+        id: 'int-1',
+        token: 'tok',
+        data: { custom_id: customId },
+        user: { id: 'discord-user-1' },
+        message: { embeds: [{ title: 'T', description: 'Agent wants to run X' }] },
+      },
+    });
+  }
+
+  beforeEach(() => {
+    vi.mocked(getAskQuestionRender).mockReturnValue(render as never);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true })),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.mocked(getAskQuestionRender).mockReset();
+  });
+
+  it('Approve (index 0) dispatches "approve" — not the raw "0\\n0" — and labels the card "Approved"', async () => {
+    const onAction = vi.fn();
+    await handleForwardedEvent(click('ncq:appr-1:0\n0'), {} as never, { onAction } as never);
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(onAction).toHaveBeenCalledWith('appr-1', 'approve', 'discord-user-1');
+    const edit = JSON.parse(String((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body));
+    expect(edit.data.embeds[0].description).toContain('✅ Approved');
+    expect(edit.data.embeds[0].description).not.toContain('0');
+  });
+
+  it('Reject (index 1) dispatches "reject"', async () => {
+    const onAction = vi.fn();
+    await handleForwardedEvent(click('ncq:appr-1:1\n1'), {} as never, { onAction } as never);
+    expect(onAction).toHaveBeenCalledWith('appr-1', 'reject', 'discord-user-1');
+  });
+
+  it('legacy ids without the suffix still work', async () => {
+    const onAction = vi.fn();
+    await handleForwardedEvent(click('ncq:appr-1:0'), {} as never, { onAction } as never);
+    expect(onAction).toHaveBeenCalledWith('appr-1', 'approve', 'discord-user-1');
+  });
+
+  it('resolveSelectedOption maps an index to the stored option value', () => {
+    expect(resolveSelectedOption(render as never, '1', '1')).toBe('reject');
+    expect(resolveSelectedOption(undefined, '0', '0')).toBe('0');
   });
 });

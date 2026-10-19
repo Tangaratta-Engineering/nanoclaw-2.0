@@ -93,13 +93,39 @@ export interface ChatSdkBridgeConfig {
  * platform, which is the same behavior as manually re-opening a fence.
  */
 /**
+ * Split a Discord button `custom_id` into the question id and option token.
+ *
+ * `@chat-adapter/discord` encodes a button as `<actionId>\n<value>` (newline
+ * delimiter, value omitted when empty — see encodeDiscordCustomId), and our
+ * cards use actionId `ncq:<questionId>:<index>` with value `<index>`, so a real
+ * custom_id looks like `ncq:appr-123-abc:0\n0`. The suffix must be stripped
+ * before taking the tail: otherwise the "index" becomes `0\n0`, never decodes
+ * to the option value, and the click is treated as a reject / unclaimed.
+ * Legacy ids without the suffix (`ncq:<questionId>:<index>`) still parse.
+ */
+export function parseDiscordCustomId(customId: string | undefined): {
+  questionId?: string;
+  tail?: string;
+  value?: string;
+} {
+  if (!customId) return {};
+  const nl = customId.indexOf('\n');
+  const actionId = nl === -1 ? customId : customId.slice(0, nl);
+  const value = nl === -1 ? undefined : customId.slice(nl + 1);
+  if (!actionId.startsWith('ncq:')) return { value };
+  const colonIdx = actionId.indexOf(':', 4); // after "ncq:"
+  if (colonIdx === -1) return { value };
+  return { questionId: actionId.slice(4, colonIdx), tail: actionId.slice(colonIdx + 1), value };
+}
+
+/**
  * Decode the actual option value from a button callback. Buttons are encoded
  * with an integer index (to keep under Telegram's 64-byte callback_data cap),
  * and the real value is looked up via `getAskQuestionRender(questionId)`.
  * Falls back to treating the tail as a literal value so old in-flight cards
  * (encoded before this shortening landed) still resolve.
  */
-function resolveSelectedOption(
+export function resolveSelectedOption(
   render: { options: NormalizedOption[] } | undefined,
   eventValue: string | undefined,
   tail: string | undefined,
@@ -328,16 +354,6 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         // short to fit Telegram's 64-byte callback_data cap). Old format:
         // the full value is embedded in actionId/value directly.
         const selectedOption = resolveSelectedOption(render, event.value, tail);
-        log.info('Button click', {
-          path: 'chat-sdk',
-          actionId: event.actionId,
-          eventValue: event.value,
-          questionId,
-          renderFound: !!render,
-          optionValues: render?.options.map((o) => o.value),
-          selectedOption,
-          userId,
-        });
         const title = render?.title ?? '❓ Question';
         const matched = render?.options.find((o) => o.value === selectedOption);
         const selectedLabel = matched?.selectedLabel ?? selectedOption ?? '(clicked)';
@@ -654,7 +670,7 @@ function startLocalWebhookServer(
   });
 }
 
-async function handleForwardedEvent(
+export async function handleForwardedEvent(
   body: string,
   adapter: GatewayAdapter,
   setupConfig: ChannelSetup,
@@ -680,16 +696,8 @@ async function handleForwardedEvent(
       const interactionId = interaction.id as string;
       const interactionToken = interaction.token as string;
 
-      // Parse the selected option from custom_id
-      let questionId: string | undefined;
-      let tail: string | undefined;
-      if (customId?.startsWith('ncq:')) {
-        const colonIdx = customId.indexOf(':', 4); // after "ncq:"
-        if (colonIdx !== -1) {
-          questionId = customId.slice(4, colonIdx);
-          tail = customId.slice(colonIdx + 1);
-        }
-      }
+      // Parse the selected option from custom_id (`ncq:<questionId>:<index>\n<value>`)
+      const { questionId, tail, value } = parseDiscordCustomId(customId);
 
       // Update the card to show the selected answer and remove buttons
       const originalEmbeds =
@@ -698,17 +706,7 @@ async function handleForwardedEvent(
       const render = questionId ? getAskQuestionRender(questionId) : undefined;
       // Discord custom_id mirrors the new index-based encoding (see Button
       // construction). Decode back to the real option value for downstream.
-      const selectedOption = resolveSelectedOption(render, tail, tail);
-      log.info('Button click', {
-        path: 'discord-interaction',
-        customId,
-        questionId,
-        tail,
-        renderFound: !!render,
-        optionValues: render?.options.map((o) => o.value),
-        selectedOption,
-        userId: user?.id,
-      });
+      const selectedOption = resolveSelectedOption(render, value ?? tail, tail);
       const cardTitle = render?.title ?? ((originalEmbeds[0]?.title as string) || '❓ Question');
       const matchedOpt = render?.options.find((o) => o.value === selectedOption);
       const selectedLabel = matchedOpt?.selectedLabel ?? selectedOption ?? customId;
