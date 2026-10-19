@@ -1,6 +1,9 @@
+import { randomUUID } from 'crypto';
+
 import type { McpServerConfig } from '../../container-config.js';
 import { buildAgentGroupImage, killContainer, wakeContainer } from '../../container-runner.js';
 import { restartAgentGroupContainers } from '../../container-restart.js';
+import { createAgentGroup } from '../../db/agent-groups.js';
 import { getDb, hasTable } from '../../db/connection.js';
 import { getSession } from '../../db/sessions.js';
 import { writeSessionMessage } from '../../session-manager.js';
@@ -9,7 +12,8 @@ import {
   updateContainerConfigScalars,
   updateContainerConfigJson,
 } from '../../db/container-configs.js';
-import type { ContainerConfigRow } from '../../types.js';
+import { createAgentFromTemplate } from '../../templates/create-agent.js';
+import type { AgentGroup, ContainerConfigRow } from '../../types.js';
 import { registerResource } from '../crud.js';
 
 /** Deserialize JSON columns for display. */
@@ -58,11 +62,37 @@ registerResource({
     },
     { name: 'created_at', type: 'string', description: 'Auto-set.', generated: true },
   ],
-  // `delete` is intentionally not in `operations` — the generic single-table
-  // DELETE violates FK constraints (see #2525). The cascading handler is
-  // provided as `customOperations.delete` below.
-  operations: { list: 'open', get: 'open', create: 'approval', update: 'approval' },
+  // `create` and `delete` are intentionally not in `operations` — create needs
+  // a `--template` branch (below); the generic single-table DELETE violates FK
+  // constraints (see #2525). Both are provided as `customOperations`.
+  operations: { list: 'open', get: 'open', update: 'approval' },
   customOperations: {
+    create: {
+      access: 'approval',
+      description:
+        'Create an agent group. With --template <ref>, stamp from a local template under templates/ ' +
+        '(MCP servers + instructions + skills); else insert a bare row (--name, --folder).',
+      handler: async (args) => {
+        if (args.template) {
+          return createAgentFromTemplate(String(args.template), {
+            name: args.name ? String(args.name) : undefined,
+          });
+        }
+        const name = args.name ? String(args.name) : '';
+        const folder = args.folder ? String(args.folder) : '';
+        if (!name) throw new Error('--name is required');
+        if (!folder) throw new Error('--folder is required');
+        const group: AgentGroup = {
+          id: randomUUID(),
+          name,
+          folder,
+          agent_provider: null,
+          created_at: new Date().toISOString(),
+        };
+        createAgentGroup(group);
+        return group;
+      },
+    },
     delete: {
       access: 'approval',
       description:
@@ -257,24 +287,37 @@ registerResource({
       access: 'approval',
       description:
         'Add an MCP server to a group. Requires `ncl groups restart` to take effect. ' +
-        'Use --id <group-id> --name <server-name> --command <cmd> [--args <json-array>] [--env <json-object>].',
+        'Use --id <group-id> --name <server-name> and either --command <cmd> [--args <json-array>] [--env <json-object>] ' +
+        'for a local stdio server, or --url <https-url> [--transport http|sse] [--headers <json-object>] for a remote one.',
       handler: async (args) => {
         const id = args.id as string;
         if (!id) throw new Error('--id is required');
         const name = args.name as string;
         if (!name) throw new Error('--name is required');
-        const command = args.command as string;
-        if (!command) throw new Error('--command is required');
+        const command = args.command as string | undefined;
+        const url = args.url as string | undefined;
+        if (!command === !url) throw new Error('Provide exactly one of --command (stdio) or --url (remote)');
 
         const row = getContainerConfig(id);
         if (!row) throw new Error(`No container config for group: ${id}`);
 
         const servers = JSON.parse(row.mcp_servers) as Record<string, McpServerConfig>;
-        servers[name] = {
-          command,
-          args: args.args ? (JSON.parse(args.args as string) as string[]) : [],
-          env: args.env ? (JSON.parse(args.env as string) as Record<string, string>) : {},
-        };
+        if (url) {
+          if (!/^https:\/\//.test(url)) throw new Error('--url must be an https:// URL');
+          const transport = (args.transport as string | undefined) ?? 'http';
+          if (transport !== 'http' && transport !== 'sse') throw new Error('--transport must be "http" or "sse"');
+          servers[name] = {
+            type: transport,
+            url,
+            ...(args.headers ? { headers: JSON.parse(args.headers as string) as Record<string, string> } : {}),
+          };
+        } else {
+          servers[name] = {
+            command: command!,
+            args: args.args ? (JSON.parse(args.args as string) as string[]) : [],
+            env: args.env ? (JSON.parse(args.env as string) as Record<string, string>) : {},
+          };
+        }
         updateContainerConfigJson(id, 'mcp_servers', servers);
 
         return { added: name, servers };

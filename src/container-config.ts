@@ -16,12 +16,24 @@ import { getContainerConfig } from './db/container-configs.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import type { AgentGroup, ContainerConfigRow } from './types.js';
 
-export interface McpServerConfig {
+/** Local MCP server launched as a subprocess inside the container. */
+export interface StdioMcpServerConfig {
+  type?: 'stdio';
   command: string;
   args?: string[];
   env?: Record<string, string>;
   instructions?: string;
 }
+
+/** Remote MCP server reached over HTTP (streamable HTTP or SSE). */
+export interface HttpMcpServerConfig {
+  type: 'http' | 'sse';
+  url: string;
+  headers?: Record<string, string>;
+  instructions?: string;
+}
+
+export type McpServerConfig = StdioMcpServerConfig | HttpMcpServerConfig;
 
 export interface AdditionalMountConfig {
   hostPath: string;

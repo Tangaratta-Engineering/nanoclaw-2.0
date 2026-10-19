@@ -33,7 +33,7 @@ user_dms (user_id, channel_type, messaging_group_id) — cold-DM cache
 
 agent_groups (workspace, memory, CLAUDE.md, personality, container config)
     ↕ many-to-many via messaging_group_agents (session_mode, trigger_rules, priority)
-messaging_groups (one chat/channel on one platform; unknown_sender_policy)
+messaging_groups (one chat/channel on one platform; instance = adapter-instance name, defaults to channel_type; unknown_sender_policy)
 
 sessions (agent_group_id + messaging_group_id + thread_id → per-session container)
 ```
@@ -69,8 +69,8 @@ For ad-hoc queries from skills or scripts, use the in-tree wrapper rather than t
 | `src/modules/permissions/access.ts` | `canAccessAgentGroup` — owner / global admin / scoped admin / member resolution against `user_roles` + `agent_group_members` |
 | `src/modules/approvals/primitive.ts` | `pickApprover`, `pickApprovalDelivery`, `requestApproval`, approval-handler registry |
 | `src/command-gate.ts` | Router-side admin command gate — queries `user_roles` directly (no env var, no container-side check) |
-| `src/onecli-approvals.ts` | OneCLI credentialed-action approval bridge |
-| `src/user-dm.ts` | Cold-DM resolution + `user_dms` cache |
+| `src/modules/approvals/onecli-approvals.ts` | OneCLI credentialed-action approval bridge |
+| `src/modules/permissions/user-dm.ts` | Cold-DM resolution + `user_dms` cache |
 | `src/group-init.ts` | Per-agent-group filesystem scaffold (CLAUDE.md, skills, agent-runner-src overlay) |
 | `src/db/container-configs.ts` | CRUD for `container_configs` table (per-group container runtime config) |
 | `src/backfill-container-configs.ts` | Migrates legacy `container.json` files into the DB on startup |
@@ -78,11 +78,20 @@ For ad-hoc queries from skills or scripts, use the in-tree wrapper rather than t
 | `src/db/` | DB layer — agent_groups, messaging_groups, sessions, container_configs, user_roles, user_dms, pending_*, migrations |
 | `src/channels/` | Channel adapter infra (registry, Chat SDK bridge); specific channel adapters are skill-installed from the `channels` branch |
 | `src/providers/` | Host-side provider container-config (`claude` baked in; `opencode` etc. installed from the `providers` branch) |
+| `src/templates/` | Agent template system — `parse.ts` reads a local template folder, `create-agent.ts` stamps it into a new agent group (persona, MCP servers, skills; no secrets, no provider). See [docs/templates.md](docs/templates.md) |
+| `src/group-persona.ts` | Provider-neutral per-group persona file (`instructions.prepend.md`) that a template stamps; every provider's project-doc composer inlines it at the top of its generated doc |
+| `src/group-skills.ts` | Copies template-stamped skills into a provider's per-group skills directory, for providers that don't read Claude's shared `.claude-shared` store |
+| `src/inbox-safety.ts` | `ensureContainedInboxDir` — shared symlink-containment guard for per-message inbox dirs, used by both channel-inbound attachments and agent-to-agent forwarded files |
+| `src/modules/agent-to-agent/message-gate.ts` + `db/agent-message-policies.ts` | Per-pair agent-to-agent approval gating, managed via `ncl policies` (`src/cli/resources/policies.ts`). `agent-route.ts` holds a message when a policy matches; `message-gate.ts` is the approval handler that re-routes it on approve |
 | `container/agent-runner/src/` | Agent-runner: poll loop, formatter, provider abstraction, MCP tools, destinations |
+| `container/agent-runner/src/memory-scaffold.ts` | Boots a persistent `/workspace/agent` memory tree (templated `definition.md`/`index.md`) for providers that opt in via `usesMemoryScaffold`; idempotent, provider-agnostic |
+| `container/cli-tools.json` + `container/install-cli-tools.sh` | Data-driven manifest of global CLI installs baked into the agent image (vercel, agent-browser, claude-code); add a tool by editing the JSON, not the Dockerfile |
 | `container/skills/` | Container skills mounted into every agent session (`onecli-gateway`, `welcome`, `self-customize`, `agent-browser`, `slack-formatting`) |
 | `groups/<folder>/` | Per-agent-group filesystem (CLAUDE.md, skills, per-group `agent-runner-src/` overlay) |
+| `setup/providers/` | Setup-side provider registry (`registry.ts`) mirroring the host/container provider registries — drives the provider picker and the standalone `provider-auth` step |
 | `scripts/init-first-agent.ts` | Bootstrap the first DM-wired agent (used by `/init-first-agent` skill) |
 | `migrate-v2.sh` + `setup/migrate-v2/` | v1→v2 migration. Standalone script: `bash migrate-v2.sh`. Seeds DB, copies groups/sessions, installs channels, builds container, offers service switchover, then hands off to `/migrate-from-v1` skill for owner setup and CLAUDE.md cleanup. See [docs/migration-dev.md](docs/migration-dev.md). |
+| `nanoclaw.sh --uninstall` + `setup/uninstall/` | Uninstall this copy only (slug-scoped): service, containers + image, `data/`, `logs/`, `groups/`, this copy's OneCLI agents. Confirms per group; `--dry-run` previews, `--yes` skips prompts. Other copies and the shared OneCLI app are untouched. Bypasses bootstrap entirely; `uninstall.sh` is a pointer that execs it. |
 
 ## Admin CLI (`ncl`)
 
@@ -107,6 +116,7 @@ ncl help
 | user-dms | list | Cold-DM cache (read-only) |
 | dropped-messages | list | Messages from unregistered senders (read-only) |
 | approvals | list, get | Pending approval requests (read-only) |
+| policies | list, set, remove | Agent-to-agent approval gates (`agent_message_policies`) — a row forces human approval for every message from one agent group to another. `set`/`remove` require approval; directed and per-pair |
 
 Key files: `src/cli/dispatch.ts` (dispatcher + approval handler), `src/cli/crud.ts` (generic CRUD registration), `src/cli/resources/` (per-resource definitions).
 
@@ -118,6 +128,10 @@ Trunk does not ship any specific channel adapter or non-default agent provider. 
 - **`providers` branch** — OpenCode (and any future non-default agent providers). Installed via `/add-opencode`.
 
 Each `/add-<name>` skill is idempotent: `git fetch origin <branch>` → copy module(s) into the standard paths → append a self-registration import to the relevant barrel → `pnpm install <pkg>@<pinned-version>` → build.
+
+### Switching an agent group's provider
+
+An installed provider can be swapped on a live agent group as an operator action: `ncl groups config update --id <group-id> --provider <name>` + `ncl groups restart --id <group-id>`. NanoClaw doesn't migrate anything automatically — provider-specific state (memory, in-flight context) stays with its provider. Carrying memory across is a separate, explicit step: `/migrate-memory`. See [docs/provider-migration.md](docs/provider-migration.md).
 
 ## Self-Modification
 
@@ -151,33 +165,19 @@ Key files: `src/container-restart.ts`, `src/container-runner.ts` (`killContainer
 
 ## Secrets / Credentials / OneCLI
 
-API keys, OAuth tokens, and auth credentials are managed by the OneCLI gateway. Secrets are injected into per-agent containers at request time — none are passed in env vars or through chat context. The container agent sees this via the `onecli-gateway` container skill (`container/skills/onecli-gateway/SKILL.md`), which teaches it how the proxy works, how to handle auth errors, and to never ask for raw credentials. Host-side wiring: `src/onecli-approvals.ts`, `ensureAgent()` in `container-runner.ts`. Run `onecli --help`.
+API keys, OAuth tokens, and auth credentials are managed by the OneCLI gateway. Secrets are injected into per-agent containers at request time — none are passed in env vars or through chat context. The container agent sees this via the `onecli-gateway` container skill (`container/skills/onecli-gateway/SKILL.md`), which teaches it how the proxy works, how to handle auth errors, and to never ask for raw credentials. Host-side wiring: `src/modules/approvals/onecli-approvals.ts`, `ensureAgent()` in `container-runner.ts`. Run `onecli --help`.
 
-### Gotcha: auto-created agents start in `selective` secret mode
+### Secret modes
 
-When the host first spawns a session for a new agent group, `container-runner.ts:385` calls `onecli.ensureAgent({ name, identifier })`. The OneCLI `POST /api/agents` endpoint creates the agent in **`selective`** secret mode — meaning **no secrets are assigned to it by default**, even if the secrets exist in the vault and have host patterns that would otherwise match.
-
-Symptom: container starts, the proxy + CA cert are wired correctly, but the agent gets `401 Unauthorized` (or similar) from APIs whose credentials *are* in the vault. The credential just isn't in this agent's allow-list.
-
-The SDK does not expose `setSecretMode` — the only fix is the CLI (or the web UI at `http://127.0.0.1:10254`).
+Auto-created agents default to `all` secret mode — every vault secret whose host pattern matches is injected automatically, so the common case needs no per-agent setup. If an agent is in `selective` mode it gets no secrets until you assign them, which shows up as a `401` from an API whose credential *is* in the vault. The SDK can't change this; use the CLI (or the web UI at `http://127.0.0.1:10254`):
 
 ```bash
-# Find the agent (identifier is the agent group id)
-onecli agents list
-
-# Flip to "all" so every vault secret with a matching host pattern gets injected
-onecli agents set-secret-mode --id <agent-id> --mode all
-
-# Or, stay selective and assign specific secrets
-onecli secrets list                                    # find secret ids
-onecli agents set-secrets --id <agent-id> --secret-ids <id1>,<id2>
-
-# Inspect what an agent currently has
-onecli agents secrets --id <agent-id>                  # secrets assigned to this agent
-onecli secrets list                                    # all vault secrets (with host patterns)
+onecli agents list                                          # check secretMode
+onecli agents set-secret-mode --id <agent-id> --mode all    # inject all matching secrets
+onecli agents set-secrets --id <agent-id> --secret-ids ...  # or stay selective, assign specific ones
 ```
 
-If you've just enabled `mode all`, no container restart is needed — the gateway looks up secrets per request, so the next API call from the running container will see the new credentials.
+No container restart needed — the gateway looks up secrets per request.
 
 ### Requiring approval for credential use
 
@@ -193,7 +193,7 @@ If approvals are configured server-side but the host callback isn't running (or 
 Four types of skills. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full taxonomy.
 
 - **Channel/provider install skills** — copy the relevant module(s) in from the `channels` or `providers` branch, wire imports, install pinned deps (e.g. `/add-discord`, `/add-slack`, `/add-whatsapp`, `/add-opencode`).
-- **Utility skills** — ship code files alongside `SKILL.md` (e.g. `/claw`).
+- **Utility skills** — ship code files alongside `SKILL.md` (e.g. a `scripts/` CLI or helper).
 - **Operational skills** — instruction-only workflows (`/setup`, `/debug`, `/customize`, `/init-first-agent`, `/manage-channels`, `/init-onecli`, `/update-nanoclaw`).
 - **Container skills** — loaded inside agent containers at runtime (`container/skills/`: `onecli-gateway`, `welcome`, `self-customize`, `agent-browser`, `slack-formatting`).
 
@@ -206,6 +206,7 @@ Four types of skills. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full taxono
 | `/debug` | Container issues, logs, troubleshooting |
 | `/update-nanoclaw` | Bring upstream updates into a customized install |
 | `/init-onecli` | Install OneCLI Agent Vault and migrate `.env` credentials |
+| `/migrate-memory` | Carry a group's agent memory across a provider switch (operator-run, both directions) |
 
 ## Contributing
 
@@ -272,6 +273,10 @@ This project uses pnpm with `minimumReleaseAge: 4320` (3 days) in `pnpm-workspac
 - **`onlyBuiltDependencies`**: Never add packages to this list without human approval — build scripts execute arbitrary code during install.
 - **`pnpm install --frozen-lockfile`** should be used in CI, automation, and container builds. Never run bare `pnpm install` in those contexts.
 
+## Local customizations (this fork)
+
+This install carries changes that are not upstream. **Before any `/update-nanoclaw` or `/update-skills`, read [docs/local-customizations.md](docs/local-customizations.md)** — it lists each change, its files, and exactly how to resolve it on upgrade. Never edit skill-installed channel adapters in place (`src/channels/discord.ts` etc.); they are overwritten on upgrade. Put customizations in a separate file and import it from the `src/channels/index.ts` barrel.
+
 ## Docs Index
 
 | Doc | Purpose |
@@ -288,6 +293,12 @@ This project uses pnpm with `minimumReleaseAge: 4320` (3 days) in `pnpm-workspac
 | [docs/build-and-runtime.md](docs/build-and-runtime.md) | Runtime split (Node host + Bun container), lockfiles, image build surface, CI, key invariants |
 | [docs/v1-to-v2-changes.md](docs/v1-to-v2-changes.md) | v1→v2 architecture diff — vocabulary for where v1 things moved |
 | [docs/migration-dev.md](docs/migration-dev.md) | Migration development guide — testing, debugging, dev loop |
+| [docs/provider-migration.md](docs/provider-migration.md) | Switching a live agent group between providers (e.g. Claude → Codex) — what carries over, rollback |
+| [docs/customizing.md](docs/customizing.md) | Short intro to customizing via skills |
+| [docs/skills-model.md](docs/skills-model.md) | The skills model in full: recipes, tests, upgrades, migrations |
+| [docs/skill-guidelines.md](docs/skill-guidelines.md) | Authoritative checklist for writing a skill |
+| [docs/templates.md](docs/templates.md) | Agent templates: what they are, stamping via `ncl groups create --template` + the setup wizard, the OneCLI/MCP-credential model, supported providers, and how to contribute one |
+| [docs/local-customizations.md](docs/local-customizations.md) | This fork's changes vs upstream, what to do with each on upgrade, non-git state to back up, upgrade checklist |
 
 ## Container Build Cache
 
@@ -322,3 +333,11 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw   # macOS
 ```
 
 `container/build.sh` reads `INSTALL_CJK_FONTS` from `.env` and passes it through as a Docker build-arg. Without CJK fonts, Chromium-rendered screenshots and PDFs containing CJK text show tofu (empty rectangles) instead of characters.
+
+## Remote Control (phone admin session)
+
+`systemd/claude-rc.service` runs `claude remote-control` in this directory (install: copy to `~/.config/systemd/user/`, `systemctl --user enable --now claude-rc`). Sessions started from the Claude mobile app / claude.ai/code then operate on this checkout with full host access. From such a session:
+
+- Message NanoClaw: `pnpm run chat <message...>` (default `cli/local` agent) or `pnpm run chat --to <channelType>:<platformId> <message...>` to inject into a specific wired chat (`ncl messaging-groups list`).
+- Admin: `ncl ...`, edit `src/` or `groups/`, `pnpm run build && systemctl --user restart nanoclaw`, `./container/build.sh`.
+- Bridge: `systemctl --user status|restart claude-rc`; `journalctl --user -u claude-rc`.
