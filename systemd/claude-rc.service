@@ -1,0 +1,15 @@
+[Unit]
+Description=Claude Code Remote Control (NanoClaw admin session)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/george/projects/nanoclaw-2.0
+ExecStart=/usr/bin/script -qfec "/home/george/.local/bin/claude remote-control --name hp-server-nanoclaw --spawn same-dir" /dev/null
+Restart=always
+RestartSec=10
+Environment=HOME=/home/george
+Environment=PATH=/home/george/.nvm/versions/node/v22.22.3/bin:/home/george/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target

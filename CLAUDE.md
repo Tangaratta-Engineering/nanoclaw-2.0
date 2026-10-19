@@ -328,3 +328,11 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw   # macOS
 ```
 
 `container/build.sh` reads `INSTALL_CJK_FONTS` from `.env` and passes it through as a Docker build-arg. Without CJK fonts, Chromium-rendered screenshots and PDFs containing CJK text show tofu (empty rectangles) instead of characters.
+
+## Remote Control (phone admin session)
+
+`systemd/claude-rc.service` runs `claude remote-control` in this directory (install: copy to `~/.config/systemd/user/`, `systemctl --user enable --now claude-rc`). Sessions started from the Claude mobile app / claude.ai/code then operate on this checkout with full host access. From such a session:
+
+- Message NanoClaw: `pnpm run chat <message...>` (default `cli/local` agent) or `pnpm run chat --to <channelType>:<platformId> <message...>` to inject into a specific wired chat (`ncl messaging-groups list`).
+- Admin: `ncl ...`, edit `src/` or `groups/`, `pnpm run build && systemctl --user restart nanoclaw`, `./container/build.sh`.
+- Bridge: `systemctl --user status|restart claude-rc`; `journalctl --user -u claude-rc`.

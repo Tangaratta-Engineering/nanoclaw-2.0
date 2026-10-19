@@ -3,6 +3,10 @@
  *
  * Usage:
  *   pnpm run chat <message...>
+ *   pnpm run chat --to <channelType>:<platformId> <message...>
+ *
+ * `--to` injects the message into a specific wired messaging group (see
+ * `ncl messaging-groups list`), e.g. `--to discord:discord:@me:149...`.
  *
  * Sends the message through the CLI channel (Unix socket) to the wired agent.
  * Reads replies until the stream goes quiet, then exits.
@@ -24,8 +28,19 @@ function socketPath(): string {
 
 function main(): void {
   const words = process.argv.slice(2);
+  let to: { channelType: string; platformId: string; threadId: null } | undefined;
+  if (words[0] === '--to') {
+    const target = words[1] ?? '';
+    const sep = target.indexOf(':');
+    if (sep < 1) {
+      console.error('usage: pnpm run chat --to <channelType>:<platformId> <message...>');
+      process.exit(1);
+    }
+    to = { channelType: target.slice(0, sep), platformId: target.slice(sep + 1), threadId: null };
+    words.splice(0, 2);
+  }
   if (words.length === 0) {
-    console.error('usage: pnpm run chat <message...>');
+    console.error('usage: pnpm run chat [--to <channelType>:<platformId>] <message...>');
     process.exit(1);
   }
   const text = words.join(' ');
@@ -56,7 +71,7 @@ function main(): void {
   }
 
   socket.on('connect', () => {
-    socket.write(JSON.stringify({ text }) + '\n');
+    socket.write(JSON.stringify(to ? { text, to } : { text }) + '\n');
     hardTimer = setTimeout(() => {
       if (!firstReplySeen) {
         console.error(`timeout: no reply in ${TOTAL_TIMEOUT_MS}ms`);
