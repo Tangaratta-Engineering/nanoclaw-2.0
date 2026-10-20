@@ -192,6 +192,12 @@ function createAdapter(): ChannelAdapter {
       log.warn('CLI: ignoring non-JSON line from client', { line });
       return;
     }
+    // Reply-only subscriber (e.g. the voice service): claim the chat slot to receive
+    // `reply_to`-redirected replies, without routing any message.
+    if ((payload as { subscribe?: unknown }).subscribe === true) {
+      claimChatSlot();
+      return;
+    }
     if (typeof payload.text !== 'string' || payload.text.length === 0) return;
 
     const to = parseAddress(payload.to);

@@ -1,0 +1,19 @@
+{
+  "name": "nanoclaw-voice",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Live Discord voice channel for a NanoClaw agent (listen → transcribe → agent → speak)",
+  "scripts": {
+    "start": "node --experimental-strip-types src/index.ts",
+    "test": "node --experimental-strip-types --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@discordjs/voice": "0.19.2",
+    "@snazzah/davey": "^0.1.12",
+    "discord.js": "^14.27.0",
+    "libsodium-wrappers": "^0.8.4",
+    "opusscript": "^0.1.1",
+    "prism-media": "1.3.5"
+  }
+}
