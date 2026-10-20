@@ -3,10 +3,11 @@
  *
  * Usage:
  *   pnpm run chat <message...>
- *   pnpm run chat --to <channelType>:<platformId> <message...>
+ *   pnpm run chat --to <channelType>:<platformId> [--instance <name>] <message...>
  *
  * `--to` injects the message into a specific wired messaging group (see
  * `ncl messaging-groups list`), e.g. `--to discord:discord:@me:149...`.
+ * `--instance` names the adapter instance that owns the chat (the `instance` column), e.g. `timmy`.
  *
  * Sends the message through the CLI channel (Unix socket) to the wired agent.
  * Reads replies until the stream goes quiet, then exits.
@@ -28,7 +29,7 @@ function socketPath(): string {
 
 function main(): void {
   const words = process.argv.slice(2);
-  let to: { channelType: string; platformId: string; threadId: null } | undefined;
+  let to: { channelType: string; platformId: string; threadId: null; instance?: string } | undefined;
   if (words[0] === '--to') {
     const target = words[1] ?? '';
     const sep = target.indexOf(':');
@@ -38,6 +39,10 @@ function main(): void {
     }
     to = { channelType: target.slice(0, sep), platformId: target.slice(sep + 1), threadId: null };
     words.splice(0, 2);
+    if (words[0] === '--instance') {
+      to.instance = words[1];
+      words.splice(0, 2);
+    }
   }
   if (words.length === 0) {
     console.error('usage: pnpm run chat [--to <channelType>:<platformId>] <message...>');

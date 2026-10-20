@@ -201,8 +201,12 @@ function createAdapter(): ChannelAdapter {
       // Routed message — admin transport. Build a full InboundEvent targeting
       // `to`'s channel/platform, and let `reply_to` (if any) redirect replies.
       // Does NOT claim the chat slot, so an active terminal chat isn't evicted.
+      // Optional adapter instance (e.g. "timmy" for the second Discord bot); absent = default instance.
+      const rawTo = payload.to as Record<string, unknown>;
+      const instance = typeof rawTo.instance === 'string' && rawTo.instance ? rawTo.instance : undefined;
       const event: InboundEvent = {
         channelType: to.channelType,
+        ...(instance ? { instance } : {}),
         platformId: to.platformId,
         threadId: to.threadId,
         message: {
