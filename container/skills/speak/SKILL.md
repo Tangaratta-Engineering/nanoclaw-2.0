@@ -8,7 +8,7 @@ allowed-tools: Bash(/app/skills/speak/scripts/speak:*)
 
 ```bash
 /app/skills/speak/scripts/speak "Good morning George. Your flights to Brisbane are one thousand seven hundred dollars, cheapest out of Sydney."
-# -> {"path": "/workspace/agent/voice-replies/reply-….ogg", "duration_secs": 9.4, "voice": "en_GB-jenny_dioco-medium", "chars": 118, "truncated": false}
+# -> {"path": "/workspace/agent/voice-replies/reply-….ogg", "duration_secs": 9.4, "voice": "en_US-hfc_female-medium", "chars": 118, "truncated": false}
 ```
 
 Then attach it: `send_file` with that `path` (leave `to` out to reply in the same chat).
@@ -16,7 +16,7 @@ Then attach it: `send_file` with that `path` (leave `to` out to reply in the sam
 ## How it works
 
 - **Piper**, a local neural voice running on this server's CPU: free, offline, nothing leaves the machine. Startup is about 4 s and speech is generated at roughly 4× real time, so a 25 s reply takes about 7 s.
-- Each agent has its own voice, chosen by its assistant name in `voices.json` (Tiff and Timmy sound different). `--voice <id>` overrides it, e.g. `--voice en_US-ryan-medium`.
+- Each agent has its own voice, chosen by its assistant name in `voices.json`: **Tiff** = `en_US-hfc_female-medium`, **Timmy** = `en_US-ryan-medium`. `--voice <id>` overrides it. Piper has no Australian English voices (only `en_GB` and `en_US`).
 - The output is **Opus in an Ogg file** at 48 kHz mono — the format Discord uses for voice messages, and it plays on every phone. It is encoded with PyAV's bundled codecs, so it does not need `ffmpeg` (the agent images don't ship it).
 - The text is cleaned for speech first: markdown, emoji, code blocks and links are removed (links are never read aloud; `$1,789` becomes "1,789 dollars"). Replies are capped at about 1,200 characters (~85 s); longer text is cut at a sentence end and the tool warns you — put the rest in a normal text message.
 
