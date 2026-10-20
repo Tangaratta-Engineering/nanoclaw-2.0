@@ -5,71 +5,11 @@ Calls api.notion.com with curl; the OneCLI gateway injects the integration
 token, so no credential is ever visible here.
 """
 import argparse
-import json
-import re
 import subprocess
 import sys
 
-API = "https://api.notion.com"
-VERSION = "2026-03-11"
-ID_RE = re.compile(r"([0-9a-fA-F]{32})(?![0-9a-fA-F])")
-UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
-
-
-class NotionError(Exception):
-    pass
-
-
-def page_id(ref):
-    """Accept a Notion URL, a bare 32-hex id or a dashed UUID."""
-    ref = ref.strip()
-    m = UUID_RE.search(ref)
-    if m:
-        return m.group(0).lower()
-    ref = ref.split("?")[0].split("#")[0]
-    # URLs end "...Title-<32hex>"
-    ids = ID_RE.findall(ref.split("/")[-1].replace("-", "")) or ID_RE.findall(ref.replace("-", ""))
-    if not ids:
-        raise NotionError(f"cannot find a Notion page id in: {ref}")
-    h = ids[-1].lower()
-    return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}"
-
-
-def request(method, path, body=None, runner=subprocess.run):
-    cmd = ["curl", "-sS", "--max-time", "60", "-X", method, API + path,
-           "-H", f"Notion-Version: {VERSION}", "-H", "Content-Type: application/json",
-           "-w", "\n%{http_code}"]
-    if body is not None:
-        cmd += ["--data-binary", "@-"]
-    p = runner(cmd, input=json.dumps(body) if body is not None else None,
-               capture_output=True, text=True)
-    if p.returncode != 0:
-        raise NotionError(f"network error: {p.stderr.strip() or p.returncode}")
-    text, _, code = p.stdout.rpartition("\n")
-    try:
-        data = json.loads(text) if text.strip() else {}
-    except ValueError:
-        raise NotionError(f"HTTP {code}: unreadable response")
-    if not code.startswith("2"):
-        msg = data.get("message", text[:300])
-        hint = ""
-        if code in ("401", "403"):
-            hint = " (token missing or lacks the capability — ask George to check the Notion integration)"
-        elif code == "404":
-            hint = " (page not found, or not shared with the integration — George must connect it via the page's ••• → Connections menu)"
-        raise NotionError(f"HTTP {code} {data.get('code', '')}: {msg}{hint}")
-    return data
-
-
-def title_of(obj):
-    props = obj.get("properties") or {}
-    for v in props.values():
-        if isinstance(v, dict) and v.get("type") == "title":
-            return "".join(t.get("plain_text", "") for t in v.get("title", [])) or "(untitled)"
-    t = obj.get("title")
-    if isinstance(t, list):
-        return "".join(x.get("plain_text", "") for x in t) or "(untitled)"
-    return "(untitled)"
+from notion_core import NotionError, page_id, request, title_of  # noqa: F401
+import notion_db
 
 
 def body_text(args):
@@ -160,11 +100,25 @@ def build_parser():
     s = sub.add_parser("append"); s.add_argument("page"); s.add_argument("--file")
     s = sub.add_parser("edit"); s.add_argument("page"); s.add_argument("--old", required=True); s.add_argument("--new", required=True); s.add_argument("--all", action="store_true")
     s = sub.add_parser("replace"); s.add_argument("page"); s.add_argument("--file"); s.add_argument("--yes-overwrite", action="store_true")
+    s = sub.add_parser("db-create", help="create a database (table) under a page")
+    s.add_argument("--parent", required=True); s.add_argument("--title", required=True)
+    s.add_argument("--columns", required=True, help='e.g. "Item:title,Person:select(George|Emily),Packed:checkbox,Due:date,Qty:number,Notes:text"')
+    s = sub.add_parser("db-schema"); s.add_argument("db")
+    s = sub.add_parser("db-add-row"); s.add_argument("db"); s.add_argument("--set", action="append", default=[], metavar="Column=value"); s.add_argument("--body-file")
+    s = sub.add_parser("db-add-rows"); s.add_argument("db"); s.add_argument("--file", required=True, help="JSON array of {column: value} objects")
+    s = sub.add_parser("db-update-row"); s.add_argument("row"); s.add_argument("--set", action="append", default=[], metavar="Column=value")
+    s = sub.add_parser("db-query"); s.add_argument("db"); s.add_argument("--where", action="append", metavar="Column=value|Column~text|Column<date")
+    s.add_argument("--sort", help="Column:asc|desc"); s.add_argument("--limit", type=int, default=50)
+    s = sub.add_parser("db-alter"); s.add_argument("db"); s.add_argument("--add", action="append"); s.add_argument("--rename", action="append", metavar="Old=New")
+    s.add_argument("--remove", action="append"); s.add_argument("--yes-remove", action="store_true")
     return p
 
 
 COMMANDS = {"search": cmd_search, "get": cmd_get, "create": cmd_create,
-            "append": cmd_append, "edit": cmd_edit, "replace": cmd_replace}
+            "append": cmd_append, "edit": cmd_edit, "replace": cmd_replace,
+            "db-create": notion_db.db_create, "db-schema": notion_db.db_schema, "db-add-row": notion_db.db_add_row,
+            "db-add-rows": notion_db.db_add_rows, "db-update-row": notion_db.db_update_row,
+            "db-query": notion_db.db_query, "db-alter": notion_db.db_alter}
 
 
 def main(argv=None, run=subprocess.run):
