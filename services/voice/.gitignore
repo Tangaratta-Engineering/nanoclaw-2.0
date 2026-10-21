@@ -1,0 +1,4 @@
+node_modules/
+voice.env
+voice-*.env
+!voice.env.example
