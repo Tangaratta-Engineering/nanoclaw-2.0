@@ -187,7 +187,7 @@ def main(argv=None, call_fn=g.call):
         print(json.dumps(run(a, call_fn)))
         return 0
     except g.GmailError as e:
-        print(json.dumps({"wakeAgent": False, "error": str(e)}))
+        print(json.dumps({"wakeAgent": True, "data": {"error": str(e)}}))  # wake Tiff so a failure is reported, not silent
         return 1
 
 
