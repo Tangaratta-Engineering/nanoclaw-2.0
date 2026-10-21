@@ -8,7 +8,7 @@ For every email decide exactly one `action`:
 |--------|------|-----------------|
 | `PAY` | an invoice, bill, statement with an amount owing, a fee, rates, fines, a payment reminder | `payee`, `amount` (as written, with currency), `due_date` (ISO or null), `invoice_no`, `how_to_pay` (BPAY biller code + reference, bank details, or the pay link — quoted exactly), `evidence` (the sentence that shows it is owed) |
 | `REPLY` | a real person (or business) is waiting on George: a question, a request, an offer to accept or decline | `who`, `asks` (one line), `draft` (the reply George would plausibly send: short, plain, no invented facts — leave `[bracketed gaps]` instead of guessing) |
-| `SCHEDULE` | a date/appointment/deadline George needs on his calendar and it is not there yet | `what`, `when`, `where` |
+| `SCHEDULE` | a date/appointment/deadline George needs on his calendar | `title`, `start` (`YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, Sydney time), `end` (optional), `where`, `exact` (true only when the email states the actual date and time; false for "next week", "likely Monday", ranges you had to guess) |
 | `DECIDE` | needs George's judgement, or you are not sure (renewals, sign-ups, forms, anything ambiguous) | `question`, `why_unsure` |
 | `READ` | worth knowing, no action (receipts, confirmations, shipping, results) | `summary` (one line) |
 | `IGNORE` | marketing and noise | — |
