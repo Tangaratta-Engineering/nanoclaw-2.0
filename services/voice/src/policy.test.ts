@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { isNoise, isStopCommand, voiceSummary } from './policy.ts';
+import { isLeadIn, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
 
 test('stop words only when short', () => {
   for (const t of ['Stop.', 'Stop talking', 'Hold on', 'wait', 'OK stop!', 'Tiff, stop']) assert.ok(isStopCommand(t), t);
@@ -24,4 +24,16 @@ test('summary keeps it short and points to chat', () => {
   assert.ok(s.length < 330);
   assert.ok(s.endsWith('The rest is in the chat.'));
   assert.ok(s.startsWith('First sentence is here.'));
+});
+
+test('whisper hallucinations are noise', () => {
+  for (const x of ['Subtitles by the Amara.org community', 'Thanks for watching!', 'Please subscribe']) assert.ok(isNoise(x, 'uncertain', false), x);
+});
+
+test('code spans are not spoken; lead-ins and read-outs recognised', () => {
+  assert.equal(voiceSummary('Added to `/workspace/agent/x.md` today.'), 'Added to today.');
+  assert.ok(isLeadIn('Costume jobs added to the file, at the top:'));
+  assert.ok(!isLeadIn('All done.'));
+  assert.ok(wantsFullReadout('Can you read that list back to me?'));
+  assert.ok(!wantsFullReadout('what is six times six'));
 });
