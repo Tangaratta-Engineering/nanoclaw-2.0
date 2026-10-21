@@ -57,6 +57,14 @@ class T(unittest.TestCase):
         self.assertIn("no_match", out)
         self.assertEqual(calls[0][1]["update_content"]["content_updates"][0]["old_str"], "a")
 
+    def test_move(self):
+        calls = []
+        run = fake([(200, {"id": "p"})], calls)
+        out = notion.cmd_move(SimpleNamespace(page=UUID, to="https://www.notion.so/X-" + UUID.replace("-", "")), run)
+        self.assertIn("Moved", out)
+        self.assertTrue(any(c.endswith("/move") for c in calls[0][0]))
+        self.assertEqual(calls[0][1], {"parent": {"type": "page_id", "page_id": UUID}})
+
 
 if __name__ == "__main__":
     unittest.main()
