@@ -6,7 +6,7 @@ allowed-tools: Bash(/app/skills/inbox-triage/scripts/inbox-fetch:*), Bash(/app/s
 
 # Inbox triage
 
-Three roles share this skill: **Tiff** runs `inbox-fetch` on schedule and talks to George; the **Clerk** (Opus worker agent) reads the dataset and decides what needs action; **drafts** are only ever sent after George presses Send. The pipeline is in the always-on `instructions.md`; the Clerk's decision rules are in `triage-rubric.md`.
+Three roles share this skill: **Tiff** runs `inbox-fetch` on schedule (daily, 8am) and talks to George; the **Clerk** (Opus worker agent) reads the dataset and decides what needs action; **drafts** are only ever sent after George presses Send. The pipeline is in the always-on `instructions.md`; the Clerk's decision rules are in `triage-rubric.md`.
 
 ## `inbox-fetch` (the scheduled-task script)
 
