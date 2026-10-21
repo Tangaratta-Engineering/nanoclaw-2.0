@@ -15,6 +15,8 @@ export interface Config {
   /** Adapter instance of the bot (omit for the default bot). */
   instance?: string;
   socketPath: string;
+  /** The agent group's session directory (contains <session>/outbound.db). */
+  sessionsDir: string;
   skillsDir: string;
   agentImage: string;
   voiceId: string;
@@ -37,6 +39,7 @@ export function loadConfig(root = path.resolve(import.meta.dirname, '../../..'))
     onecliAgent: need('VOICE_ONECLI_AGENT'),
     dmPlatformId: need('VOICE_DM_PLATFORM_ID'),
     instance: process.env.VOICE_INSTANCE || undefined,
+    sessionsDir: process.env.VOICE_SESSIONS_DIR || path.join(root, 'data/v2-sessions', need('VOICE_ONECLI_AGENT')),
     socketPath: process.env.VOICE_SOCKET || path.join(root, 'data/cli.sock'),
     skillsDir: path.join(root, 'container/skills'),
     agentImage: need('VOICE_AGENT_IMAGE'),

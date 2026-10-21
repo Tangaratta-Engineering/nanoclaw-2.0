@@ -19,9 +19,10 @@ import {
 import { Client, GatewayIntentBits } from 'discord.js';
 import prism from 'prism-media';
 
-import { AgentLink } from './agent.ts';
+import { sendToAgent } from './agent.ts';
 import { durationSecs, rms, toMono16k } from './audio.ts';
 import { loadConfig } from './config.ts';
+import { OutboxWatcher } from './outbox.ts';
 import { transcribe } from './stt.ts';
 import { synthesize } from './tts.ts';
 
@@ -34,7 +35,7 @@ const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
 const player = createAudioPlayer();
-const link = new AgentLink(cfg);
+const outbox = new OutboxWatcher(cfg.sessionsDir, cfg.dmPlatformId);
 const speechQueue: string[] = [];
 let speaking = false;
 
@@ -61,8 +62,9 @@ async function drainSpeech(): Promise<void> {
   }
 }
 
-link.onReply = (text) => {
+outbox.onText = (text) => {
   log('agent →', text.slice(0, 120));
+  outbox.arm(45_000); // keep listening for follow-up messages from the same task
   speechQueue.push(text);
   void drainSpeech();
 };
@@ -79,7 +81,8 @@ async function handleUtterance(pcm: Buffer): Promise<void> {
     void drainSpeech();
     return;
   }
-  if (!link.send(text)) {
+  outbox.arm(120_000);
+  if (!(await sendToAgent(cfg, text))) {
     speechQueue.push("I can't reach my brain right now. Try again in a moment.");
     void drainSpeech();
   }
@@ -103,7 +106,7 @@ async function main(): Promise<void> {
   if (process.env.VOICE_DEBUG) connection.on('debug', (m) => log('voice debug:', m));
   await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
   connection.subscribe(player);
-  link.connect();
+  outbox.start();
   log(`ready: ${cfg.agentName} is in the voice channel`);
 
   const active = new Set<string>();
@@ -134,7 +137,7 @@ main().catch((err) => {
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {
-    link.close();
+    outbox.stop();
     client.destroy();
     process.exit(0);
   });
