@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { isLeadIn, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
+import { isForMe, isLeadIn, startsWithName, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
 
 test('stop words only when short', () => {
   for (const t of ['Stop.', 'Stop talking', 'Hold on', 'wait', 'OK stop!', 'Tiff, stop']) assert.ok(isStopCommand(t), t);
@@ -36,4 +36,19 @@ test('code spans are not spoken; lead-ins and read-outs recognised', () => {
   assert.ok(!isLeadIn('All done.'));
   assert.ok(wantsFullReadout('Can you read that list back to me?'));
   assert.ok(!wantsFullReadout('what is six times six'));
+});
+
+test('addressing by name, with likely mishearings', () => {
+  const timmy = ['timmy', 'tim', 'jimmy'];
+  for (const x of ['Timmy, what is the flight price?', 'Hey Timmy can you help', 'Okay, Tim: plan the trip', 'Jimmy, are you there']) assert.ok(startsWithName(x, timmy), x);
+  for (const x of ['What time is it', 'Tell Timmy to wait', 'Tiff, hello', '']) assert.ok(!startsWithName(x, timmy), x);
+});
+
+test('who answers: named agent only when addressed, default agent otherwise', () => {
+  const timmy = ['timmy', 'tim', 'jimmy'];
+  assert.ok(isForMe('Timmy, plan Rotorua', timmy, []));
+  assert.ok(!isForMe('Tiff, what is on today', timmy, []));
+  assert.ok(isForMe('Tiff, what is on today', [], timmy));
+  assert.ok(isForMe('What is on today', [], timmy));
+  assert.ok(!isForMe('Timmy, plan Rotorua', [], timmy));
 });

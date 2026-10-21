@@ -23,7 +23,7 @@ import { sendToAgent } from './agent.ts';
 import { durationSecs, rms, toMono16k } from './audio.ts';
 import { loadConfig } from './config.ts';
 import { OutboxWatcher } from './outbox.ts';
-import { isLeadIn, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
+import { isForMe, isLeadIn, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
 import { transcribe } from './stt.ts';
 import { synthesize } from './tts.ts';
 
@@ -117,6 +117,10 @@ async function handleUtterance(pcm: Buffer): Promise<void> {
   if (isStopCommand(text)) {
     log('stop command');
     stopSpeaking();
+    return;
+  }
+  if (!isForMe(text, cfg.wakeNames, cfg.otherNames)) {
+    log('not for me:', text.slice(0, 60));
     return;
   }
   if (isNoise(text, reliability, wasBusy)) return;

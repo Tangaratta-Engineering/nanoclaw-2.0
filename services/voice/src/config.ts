@@ -8,6 +8,10 @@ export interface Config {
   userId: string;
   /** Name used for the agent's voice and the spoken-call preamble. */
   agentName: string;
+  /** Names this agent answers to when addressed ("Timmy, ..."). Empty = default agent that answers anything not addressed to another. */
+  wakeNames: string[];
+  /** Names of the other agents; an utterance addressed to one of them is ignored by this service. */
+  otherNames: string[];
   /** OneCLI agent identifier used to inject the Groq key. */
   onecliAgent: string;
   /** Where the agent's replies come from / go: the DM messaging group. */
@@ -29,13 +33,17 @@ function need(name: string): string {
   return v;
 }
 
+const list = (v?: string): string[] => (v ?? '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+
 export function loadConfig(root = path.resolve(import.meta.dirname, '../../..')): Config {
   return {
-    token: process.env.VOICE_BOT_TOKEN || need('DISCORD_BOT_TOKEN'),
+    token: process.env.VOICE_BOT_TOKEN || need(process.env.VOICE_TOKEN_VAR || 'DISCORD_BOT_TOKEN'),
     guildId: need('VOICE_GUILD_ID'),
     channelId: need('VOICE_CHANNEL_ID'),
     userId: need('VOICE_USER_ID'),
     agentName: process.env.VOICE_AGENT_NAME || 'Tiff',
+    wakeNames: list(process.env.VOICE_WAKE_NAMES),
+    otherNames: list(process.env.VOICE_OTHER_NAMES),
     onecliAgent: need('VOICE_ONECLI_AGENT'),
     dmPlatformId: need('VOICE_DM_PLATFORM_ID'),
     instance: process.env.VOICE_INSTANCE || undefined,

@@ -53,3 +53,23 @@ export function wantsFullReadout(utterance: string): boolean {
 export function isLeadIn(text: string): boolean {
   return /:\s*$/.test(text.trim());
 }
+
+const GREETINGS = new Set(['hey', 'hi', 'hello', 'ok', 'okay', 'yo', 'oi', 'um', 'uh', 'so']);
+
+/** True when the first few words of the utterance are one of `names` ("Hey Timmy, ..." / "Timmy: ..."). */
+export function startsWithName(text: string, names: string[]): boolean {
+  if (!names.length) return false;
+  const words = norm(text).split(' ').filter(Boolean);
+  let i = 0;
+  while (i < words.length && i < 2 && GREETINGS.has(words[i])) i++;
+  return words.slice(i, i + 1).some((w) => names.includes(w));
+}
+
+/**
+ * Should this service act on the utterance? A named agent answers only when addressed by name;
+ * the default agent answers everything not addressed to another agent.
+ */
+export function isForMe(text: string, wakeNames: string[], otherNames: string[]): boolean {
+  if (wakeNames.length) return startsWithName(text, wakeNames);
+  return !startsWithName(text, otherNames);
+}
