@@ -13,6 +13,7 @@ $N get <page-url-or-id>                  # page content as Markdown
 $N create --parent <page> --title "Rotorua trip" --file /tmp/body.md   # or pipe Markdown on stdin
 $N append <page> --file /tmp/more.md     # add to the end
 $N edit <page> --old "TBC" --new "Booked" [--all]   # targeted change
+$N move <page> --to <new-parent-page>      # re-parent a page (never to the top level: the API cannot)
 $N replace <page> --file /tmp/new.md --yes-overwrite  # whole-page rewrite
 ```
 
