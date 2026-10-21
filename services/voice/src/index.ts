@@ -23,12 +23,14 @@ import { sendToAgent } from './agent.ts';
 import { durationSecs, rms, toMono16k } from './audio.ts';
 import { loadConfig } from './config.ts';
 import { OutboxWatcher } from './outbox.ts';
+import { isNoise, isStopCommand, voiceSummary } from './policy.ts';
 import { transcribe } from './stt.ts';
 import { synthesize } from './tts.ts';
 
 const MIN_SECS = 0.5;
 const MIN_RMS = 0.005;
-const SILENCE_MS = 1200;
+const SILENCE_MS = 1500; // let a thought finish before cutting the clip
+const MAX_SPOKEN_PER_TURN = 2; // agent messages spoken per utterance; the rest stay as text
 
 const cfg = loadConfig();
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
@@ -38,6 +40,18 @@ const player = createAudioPlayer();
 const outbox = new OutboxWatcher(cfg.sessionsDir, cfg.dmPlatformId);
 const speechQueue: string[] = [];
 let speaking = false;
+let generation = 0; // bumped on stop so in-flight synthesis is discarded
+let spokenThisTurn = 0;
+const pending: string[] = []; // things George said while she was talking, sent when she finishes
+
+const busy = () => speaking || speechQueue.length > 0;
+
+function stopSpeaking(): void {
+  generation++;
+  speechQueue.length = 0;
+  pending.length = 0;
+  if (player.state.status === AudioPlayerStatus.Playing) player.stop(true);
+}
 
 async function drainSpeech(): Promise<void> {
   if (speaking) return;
@@ -45,11 +59,16 @@ async function drainSpeech(): Promise<void> {
   try {
     while (speechQueue.length) {
       const text = speechQueue.shift()!;
+      const gen = generation;
       let file: string;
       try {
         file = await synthesize(cfg, text);
       } catch (err) {
         log('tts failed', String(err).slice(0, 200));
+        continue;
+      }
+      if (gen !== generation) {
+        fs.rmSync(file, { force: true });
         continue;
       }
       player.play(createAudioResource(fs.createReadStream(file), { inputType: StreamType.OggOpus }));
@@ -60,12 +79,21 @@ async function drainSpeech(): Promise<void> {
   } finally {
     speaking = false;
   }
+  if (pending.length) {
+    const said = pending.splice(0).join(' ');
+    log('sending what you said while she was talking:', said);
+    outbox.arm(120_000);
+    spokenThisTurn = 0;
+    void sendToAgent(cfg, said);
+  }
 }
 
 outbox.onText = (text) => {
   log('agent →', text.slice(0, 120));
   outbox.arm(45_000); // keep listening for follow-up messages from the same task
-  speechQueue.push(text);
+  if (spokenThisTurn >= MAX_SPOKEN_PER_TURN) return; // long replies live in the text chat
+  spokenThisTurn++;
+  speechQueue.push(voiceSummary(text));
   void drainSpeech();
 };
 
@@ -75,7 +103,18 @@ async function handleUtterance(pcm: Buffer): Promise<void> {
   const t0 = Date.now();
   const { text, reliability } = await transcribe(cfg, samples);
   log(`heard (${reliability}, ${Date.now() - t0}ms):`, text);
-  if (!text) return;
+  const wasBusy = busy();
+  if (isStopCommand(text)) {
+    log('stop command');
+    stopSpeaking();
+    return;
+  }
+  if (isNoise(text, reliability, wasBusy)) return;
+  if (wasBusy) {
+    pending.push(text); // low tolerance for interruption: finish her thought first
+    return;
+  }
+  spokenThisTurn = 0;
   if (reliability === 'poor') {
     speechQueue.push("Sorry, I didn't catch that. Could you say it again?");
     void drainSpeech();
@@ -112,9 +151,6 @@ async function main(): Promise<void> {
   const active = new Set<string>();
   connection.receiver.speaking.on('start', (userId) => {
     if (userId !== cfg.userId) return;
-    // barge-in: stop talking and drop anything queued when George starts speaking
-    speechQueue.length = 0;
-    if (player.state.status === AudioPlayerStatus.Playing) player.stop(true);
     if (active.has(userId)) return;
     active.add(userId);
     const opus = connection.receiver.subscribe(userId, { end: { behavior: EndBehaviorType.AfterSilence, duration: SILENCE_MS } });
