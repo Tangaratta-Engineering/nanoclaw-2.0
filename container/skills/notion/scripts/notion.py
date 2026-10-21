@@ -91,6 +91,11 @@ def cmd_replace(a, run):
     return "Page content replaced. (Child pages/databases are never deleted by this tool.)"
 
 
+def cmd_move(a, run):
+    request("POST", f"/v1/pages/{page_id(a.page)}/move", {"parent": {"type": "page_id", "page_id": page_id(a.to)}}, run)
+    return "Moved. (The API can only move a page under another page, not to the workspace top level.)"
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="notion", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -100,6 +105,7 @@ def build_parser():
     s = sub.add_parser("append"); s.add_argument("page"); s.add_argument("--file")
     s = sub.add_parser("edit"); s.add_argument("page"); s.add_argument("--old", required=True); s.add_argument("--new", required=True); s.add_argument("--all", action="store_true")
     s = sub.add_parser("replace"); s.add_argument("page"); s.add_argument("--file"); s.add_argument("--yes-overwrite", action="store_true")
+    s = sub.add_parser("move"); s.add_argument("page"); s.add_argument("--to", required=True, help="new parent page")
     s = sub.add_parser("db-create", help="create a database (table) under a page")
     s.add_argument("--parent", required=True); s.add_argument("--title", required=True)
     s.add_argument("--columns", required=True, help='e.g. "Item:title,Person:select(George|Emily),Packed:checkbox,Due:date,Qty:number,Notes:text"')
@@ -115,7 +121,7 @@ def build_parser():
 
 
 COMMANDS = {"search": cmd_search, "get": cmd_get, "create": cmd_create,
-            "append": cmd_append, "edit": cmd_edit, "replace": cmd_replace,
+            "append": cmd_append, "edit": cmd_edit, "replace": cmd_replace, "move": cmd_move,
             "db-create": notion_db.db_create, "db-schema": notion_db.db_schema, "db-add-row": notion_db.db_add_row,
             "db-add-rows": notion_db.db_add_rows, "db-update-row": notion_db.db_update_row,
             "db-query": notion_db.db_query, "db-alter": notion_db.db_alter}
