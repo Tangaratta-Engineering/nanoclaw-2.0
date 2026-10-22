@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Wrapper: runs pdf_text.py with the container's Python. See SKILL.md.
+exec python3 "$(dirname "$0")/pdf_text.py" "$@"
