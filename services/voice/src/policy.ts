@@ -100,3 +100,30 @@ export function lifecycleAction(p: Presence): 'join' | 'schedule-leave' | 'cance
   }
   return p.connected && !p.leaving ? 'schedule-leave' : 'none';
 }
+
+/** Split a reply into speakable chunks so the first can play while the rest is still being synthesized. */
+export function splitForSpeech(text: string, minLen = 40): string[] {
+  const parts = text.replace(/\s+/g, ' ').trim().match(/[^.!?]+[.!?]*\s*/g) ?? [text];
+  const out: string[] = [];
+  let cur = '';
+  for (const p of parts) {
+    cur += p;
+    if (cur.trim().length >= minLen) {
+      out.push(cur.trim());
+      cur = '';
+    }
+  }
+  if (cur.trim()) {
+    if (out.length && cur.trim().length < 15) out[out.length - 1] += ' ' + cur.trim();
+    else out.push(cur.trim());
+  }
+  return out;
+}
+
+/** How long to wait for a continuation after a transcript: short when it sounds finished, longer when it trails off. */
+export function debounceFor(text: string): number {
+  const t = text.trim();
+  const words = t.split(/\s+/).length;
+  if (/[.?!]["')]*$/.test(t) && words >= 3) return 1000;
+  return 2000;
+}

@@ -24,16 +24,15 @@ import { sendToAgent } from './agent.ts';
 import { durationSecs, rms, toMono16k } from './audio.ts';
 import { loadConfig } from './config.ts';
 import { OutboxWatcher } from './outbox.ts';
-import { isForMe, isLeadIn, isNoise, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
+import { debounceFor, splitForSpeech, isForMe, isLeadIn, isNoise, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
 import { transcribe } from './stt.ts';
-import { synthesize } from './tts.ts';
+import { TtsWorker } from './tts.ts';
 
 const MIN_SECS = 0.5;
 const MIN_RMS = 0.005;
-const SILENCE_MS = 1500; // let a thought finish before cutting the clip
+const SILENCE_MS = 1100; // let a thought finish before cutting the clip
 const MAX_SPOKEN_PER_TURN = 1; // agent messages spoken per turn; the rest stay as text
 const TURN_GAP_MS = 15_000; // a message this long after the last spoken one starts a new turn (e.g. a task result)
-const DEBOUNCE_MS = 2200; // wait for a continuation before sending, so a dictation is one message not three
 
 const cfg = loadConfig();
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
@@ -41,10 +40,13 @@ const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
 const player = createAudioPlayer();
 const outbox = new OutboxWatcher(cfg.sessionsDir, cfg.dmPlatformId);
+const tts = new TtsWorker(cfg);
 const speechQueue: string[] = [];
 let speaking = false;
 let generation = 0; // bumped on stop so in-flight synthesis is discarded
 let spokenThisTurn = 0;
+let lastClipEnd = 0;
+let turnStart = 0; // when George's last clip ended, for the latency log
 let lastSpokenAt = 0;
 let fullReadout = false;
 const utterBuf: string[] = [];
@@ -60,23 +62,35 @@ function stopSpeaking(): void {
   if (player.state.status === AudioPlayerStatus.Playing) player.stop(true);
 }
 
+interface Synth {
+  p: Promise<string | null>;
+  gen: number;
+}
+const synth = (text: string): Synth => ({
+  gen: generation,
+  p: tts.synthesize(text).catch((e) => {
+    log('tts failed', String(e).slice(0, 200));
+    return null;
+  }),
+});
+
 async function drainSpeech(): Promise<void> {
   if (speaking) return;
   speaking = true;
   try {
-    while (speechQueue.length) {
-      const text = speechQueue.shift()!;
-      const gen = generation;
-      let file: string;
-      try {
-        file = await synthesize(cfg, text);
-      } catch (err) {
-        log('tts failed', String(err).slice(0, 200));
-        continue;
-      }
-      if (gen !== generation) {
+    let ahead: Synth | null = null; // the next chunk is synthesized while the current one plays
+    while (speechQueue.length || ahead) {
+      const cur: Synth = ahead ?? synth(speechQueue.shift()!);
+      ahead = speechQueue.length ? synth(speechQueue.shift()!) : null;
+      const file = await cur.p;
+      if (!file) continue;
+      if (cur.gen !== generation) {
         fs.rmSync(file, { force: true });
         continue;
+      }
+      if (turnStart) {
+        log(`latency: ${Date.now() - turnStart} ms from the end of your sentence to the first sound`);
+        turnStart = 0;
       }
       player.play(createAudioResource(fs.createReadStream(file), { inputType: StreamType.OggOpus }));
       await entersState(player, AudioPlayerStatus.Playing, 5_000).catch(() => {});
@@ -104,7 +118,7 @@ outbox.onText = (text) => {
   if (spokenThisTurn >= (fullReadout ? 4 : MAX_SPOKEN_PER_TURN)) return; // long replies live in the text chat
   spokenThisTurn++;
   lastSpokenAt = Date.now();
-  speechQueue.push(fullReadout ? voiceSummary(text, 900) : voiceSummary(text));
+  speechQueue.push(...splitForSpeech(fullReadout ? voiceSummary(text, 900) : voiceSummary(text)));
   void drainSpeech();
 };
 
@@ -113,6 +127,7 @@ async function handleUtterance(pcm: Buffer): Promise<void> {
   if (durationSecs(samples) < MIN_SECS || rms(samples) < MIN_RMS) return;
   const t0 = Date.now();
   const { text, reliability } = await transcribe(cfg, samples);
+  const clipEnded = t0 - SILENCE_MS; // the clip is cut after this much silence
   log(`heard (${reliability}, ${Date.now() - t0}ms):`, text);
   const wasBusy = busy();
   if (isSleepCommand(text)) {
@@ -142,9 +157,10 @@ async function handleUtterance(pcm: Buffer): Promise<void> {
     void drainSpeech();
     return;
   }
+  lastClipEnd = clipEnded;
   utterBuf.push(text);
   if (debounce) clearTimeout(debounce);
-  debounce = setTimeout(() => void flushUtterances(), DEBOUNCE_MS);
+  debounce = setTimeout(() => void flushUtterances(), debounceFor(text));
 }
 
 /** Send everything George said in one go once he has paused long enough. */
@@ -158,6 +174,7 @@ async function flushUtterances(): Promise<void> {
   }
   fullReadout = wantsFullReadout(said);
   spokenThisTurn = 0;
+  turnStart = lastClipEnd;
   outbox.arm(120_000);
   log('→ agent:', said.slice(0, 160));
   if (!(await sendToAgent(cfg, said))) {
@@ -225,6 +242,7 @@ async function join(): Promise<void> {
     await entersState(conn, VoiceConnectionStatus.Ready, 30_000);
     conn.subscribe(player);
     listen(conn);
+    tts.warm(); // load the voice now so the first reply is not slow
     log(`joined: ${cfg.agentName} is in the voice channel`);
   } catch (e) {
     log('join failed, will retry:', String(e).slice(0, 150));
@@ -240,6 +258,7 @@ function leave(): void {
   stopSpeaking();
   connection?.destroy();
   connection = null;
+  tts.stop();
   log('left: George is not in the channel');
 }
 
@@ -285,6 +304,7 @@ main().catch((err) => {
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {
     outbox.stop();
+    tts.stop();
     client.destroy();
     process.exit(0);
   });
