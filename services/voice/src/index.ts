@@ -10,20 +10,21 @@ import {
   EndBehaviorType,
   StreamType,
   VoiceConnectionStatus,
+  type VoiceConnection,
   AudioPlayerStatus,
   createAudioPlayer,
   createAudioResource,
   entersState,
   joinVoiceChannel,
 } from '@discordjs/voice';
-import { Client, GatewayIntentBits } from 'discord.js';
+import { Client, GatewayIntentBits, type Guild } from 'discord.js';
 import prism from 'prism-media';
 
 import { sendToAgent } from './agent.ts';
 import { durationSecs, rms, toMono16k } from './audio.ts';
 import { loadConfig } from './config.ts';
 import { OutboxWatcher } from './outbox.ts';
-import { isForMe, isLeadIn, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
+import { isForMe, isLeadIn, isNoise, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
 import { transcribe } from './stt.ts';
 import { synthesize } from './tts.ts';
 
@@ -114,6 +115,18 @@ async function handleUtterance(pcm: Buffer): Promise<void> {
   const { text, reliability } = await transcribe(cfg, samples);
   log(`heard (${reliability}, ${Date.now() - t0}ms):`, text);
   const wasBusy = busy();
+  if (isSleepCommand(text)) {
+    log('sleep command: no longer listening until George unmutes or rejoins');
+    asleep = true;
+    stopSpeaking();
+    utterBuf.length = 0;
+    if (!cfg.wakeNames.length || startsWithName(text, cfg.wakeNames)) {
+      speechQueue.push("Okay, I've stopped listening. Unmute yourself or rejoin the channel to wake me.");
+      void drainSpeech();
+    }
+    return;
+  }
+  if (asleep) return; // a clip captured just before "go to sleep" must not be acted on
   if (isStopCommand(text)) {
     log('stop command');
     stopSpeaking();
@@ -153,33 +166,25 @@ async function flushUtterances(): Promise<void> {
   }
 }
 
-async function main(): Promise<void> {
-  const ready = new Promise<void>((r) => client.once('clientReady', () => r()));
-  await client.login(cfg.token);
-  await ready;
-  if (process.env.VOICE_DEBUG) client.on('raw', (p: { t?: string }) => p.t?.startsWith('VOICE') && log('raw', p.t));
-  log('gateway ready');
-  const guild = await client.guilds.fetch(cfg.guildId);
-  const connection = joinVoiceChannel({
-    channelId: cfg.channelId,
-    guildId: cfg.guildId,
-    adapterCreator: guild.voiceAdapterCreator,
-    selfDeaf: false,
-    debug: !!process.env.VOICE_DEBUG,
-  });
-  connection.on('stateChange', (o, n) => log('voice state:', o.status, '→', n.status));
-  if (process.env.VOICE_DEBUG) connection.on('debug', (m) => log('voice debug:', m));
-  await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
-  connection.subscribe(player);
-  outbox.start();
-  log(`ready: ${cfg.agentName} is in the voice channel`);
+const LEAVE_GRACE_MS = 3 * 60_000; // stay a little after George leaves, in case he drops out and rejoins
+const CHECK_MS = 30_000;
 
+let connection: VoiceConnection | null = null;
+let joining = false;
+let asleep = false; // "go to sleep": nothing is captured or sent anywhere until George unmutes or rejoins
+let leaveTimer: NodeJS.Timeout | null = null;
+let guild: Guild;
+
+const georgeState = () => guild.voiceStates.cache.get(cfg.userId);
+const georgeInChannel = () => georgeState()?.channelId === cfg.channelId;
+const alive = () => !!connection && connection.state.status !== VoiceConnectionStatus.Destroyed;
+
+function listen(conn: VoiceConnection): void {
   const active = new Set<string>();
-  connection.receiver.speaking.on('start', (userId) => {
-    if (userId !== cfg.userId) return;
-    if (active.has(userId)) return;
+  conn.receiver.speaking.on('start', (userId) => {
+    if (userId !== cfg.userId || asleep || active.has(userId)) return;
     active.add(userId);
-    const opus = connection.receiver.subscribe(userId, { end: { behavior: EndBehaviorType.AfterSilence, duration: SILENCE_MS } });
+    const opus = conn.receiver.subscribe(userId, { end: { behavior: EndBehaviorType.AfterSilence, duration: SILENCE_MS } });
     const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
     const chunks: Buffer[] = [];
     opus.pipe(decoder);
@@ -190,6 +195,86 @@ async function main(): Promise<void> {
     });
     opus.on('error', () => active.delete(userId));
   });
+}
+
+async function join(): Promise<void> {
+  if (joining || alive()) return;
+  joining = true;
+  try {
+    const conn = joinVoiceChannel({
+      channelId: cfg.channelId,
+      guildId: cfg.guildId,
+      adapterCreator: guild.voiceAdapterCreator,
+      selfDeaf: false,
+      debug: !!process.env.VOICE_DEBUG,
+    });
+    conn.on('stateChange', (o, n) => log('voice state:', o.status, '→', n.status));
+    if (process.env.VOICE_DEBUG) conn.on('debug', (m) => log('voice debug:', m));
+    // Discord moved us or dropped the link: give it a few seconds to renegotiate, otherwise start over.
+    conn.on(VoiceConnectionStatus.Disconnected, async () => {
+      try {
+        await Promise.race([entersState(conn, VoiceConnectionStatus.Signalling, 5_000), entersState(conn, VoiceConnectionStatus.Connecting, 5_000)]);
+      } catch {
+        if (conn.state.status !== VoiceConnectionStatus.Destroyed) conn.destroy();
+      }
+    });
+    conn.on(VoiceConnectionStatus.Destroyed, () => {
+      if (connection === conn) connection = null;
+    });
+    connection = conn;
+    await entersState(conn, VoiceConnectionStatus.Ready, 30_000);
+    conn.subscribe(player);
+    listen(conn);
+    log(`joined: ${cfg.agentName} is in the voice channel`);
+  } catch (e) {
+    log('join failed, will retry:', String(e).slice(0, 150));
+    connection?.destroy();
+    connection = null;
+  } finally {
+    joining = false;
+  }
+}
+
+function leave(): void {
+  leaveTimer = null;
+  stopSpeaking();
+  connection?.destroy();
+  connection = null;
+  log('left: George is not in the channel');
+}
+
+/** Join when George is in the channel, leave (after a grace period) when he is not, rejoin if the link died. */
+function reconcile(): void {
+  const act = lifecycleAction({ georgeInChannel: georgeInChannel(), connected: alive(), leaving: !!leaveTimer });
+  if (act === 'join') void join();
+  else if (act === 'schedule-leave') leaveTimer = setTimeout(leave, LEAVE_GRACE_MS);
+  else if (act === 'cancel-leave' && leaveTimer) {
+    clearTimeout(leaveTimer);
+    leaveTimer = null;
+  }
+}
+
+async function main(): Promise<void> {
+  const ready = new Promise<void>((r) => client.once('clientReady', () => r()));
+  await client.login(cfg.token);
+  await ready;
+  if (process.env.VOICE_DEBUG) client.on('raw', (p: { t?: string }) => p.t?.startsWith('VOICE') && log('raw', p.t));
+  guild = client.guilds.cache.get(cfg.guildId) ?? (await client.guilds.fetch(cfg.guildId));
+  log('gateway ready');
+  outbox.start();
+
+  client.on('voiceStateUpdate', (before, after) => {
+    if (after.id !== cfg.userId) return;
+    const arrived = before.channelId !== cfg.channelId && after.channelId === cfg.channelId;
+    const unmuted = !!before.selfMute && !after.selfMute;
+    if (arrived || unmuted) {
+      if (asleep) log('waking up');
+      asleep = false; // rejoining or unmuting yourself is the wake-up signal
+    }
+    reconcile();
+  });
+  reconcile();
+  setInterval(reconcile, CHECK_MS);
 }
 
 main().catch((err) => {
