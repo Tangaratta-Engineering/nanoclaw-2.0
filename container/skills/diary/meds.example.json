@@ -1,0 +1,17 @@
+{
+  "drugs": {
+    "paracetamol": {
+      "unit_mg": 500,
+      "min_interval_h": 4,
+      "max_24h_mg": 4000,
+      "soft_24h_mg": 3000
+    },
+    "ibuprofen": {
+      "class": "nsaid",
+      "unit_mg": 200,
+      "per_dose_max_mg": 400,
+      "min_interval_h": 6,
+      "max_24h_mg": 1200
+    }
+  }
+}
