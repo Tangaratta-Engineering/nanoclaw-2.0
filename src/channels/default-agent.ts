@@ -64,8 +64,14 @@ type AgentIds = Record<string, string[]>;
 let cachedIds: AgentIds | null = null;
 function agentIds(): AgentIds {
   if (cachedIds) return cachedIds;
-  const env = readEnvFile(['DISCORD_APPLICATION_ID', 'DISCORD_MENTION_ROLE_IDS', 'DISCORD_TIMMY_APPLICATION_ID', 'DISCORD_TIMMY_MENTION_ROLE_IDS']);
-  const list = (app?: string, roles?: string) => [app, ...(roles ?? '').split(',')].map((x) => (x ?? '').trim()).filter(Boolean);
+  const env = readEnvFile([
+    'DISCORD_APPLICATION_ID',
+    'DISCORD_MENTION_ROLE_IDS',
+    'DISCORD_TIMMY_APPLICATION_ID',
+    'DISCORD_TIMMY_MENTION_ROLE_IDS',
+  ]);
+  const list = (app?: string, roles?: string) =>
+    [app, ...(roles ?? '').split(',')].map((x) => (x ?? '').trim()).filter(Boolean);
   cachedIds = {
     discord: list(env.DISCORD_APPLICATION_ID, env.DISCORD_MENTION_ROLE_IDS),
     timmy: list(env.DISCORD_TIMMY_APPLICATION_ID, env.DISCORD_TIMMY_MENTION_ROLE_IDS),

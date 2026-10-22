@@ -82,7 +82,6 @@ describe('qualifiesForDefaultAgent', () => {
   });
 });
 
-
 describe('addressedToOtherAgent', () => {
   const ids = { discord: ['100', '101'], timmy: ['200', '201'] };
 
