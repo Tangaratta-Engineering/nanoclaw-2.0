@@ -19,7 +19,12 @@
  *   - it has text OR an attachment (a Discord voice message has NO text, only an audio
  *     attachment — it must not be dropped);
  *   - its author is not a bot (never react to bot posts: avoids agent loops).
+ *
+ * Second job: a `mention-sticky` session stays engaged with EVERY later message in its chat, so a
+ * message that tags the OTHER agent (and not this one) would still reach this agent's session. Such
+ * messages are consumed here so each agent only reacts to what is meant for it.
  */
+import { readEnvFile } from '../env.js';
 import { getMessagingGroupWithAgentCount } from '../db/messaging-groups.js';
 import { registerMessageInterceptor, routeInbound } from '../router.js';
 import type { InboundEvent } from './adapter.js';
@@ -53,7 +58,50 @@ export function qualifiesForDefaultAgent(event: InboundEvent): boolean {
   return true;
 }
 
+/** Discord ids (bot user + mention roles) that address each agent, by adapter instance. */
+type AgentIds = Record<string, string[]>;
+
+let cachedIds: AgentIds | null = null;
+function agentIds(): AgentIds {
+  if (cachedIds) return cachedIds;
+  const env = readEnvFile([
+    'DISCORD_APPLICATION_ID',
+    'DISCORD_MENTION_ROLE_IDS',
+    'DISCORD_TIMMY_APPLICATION_ID',
+    'DISCORD_TIMMY_MENTION_ROLE_IDS',
+  ]);
+  const list = (app?: string, roles?: string) =>
+    [app, ...(roles ?? '').split(',')].map((x) => (x ?? '').trim()).filter(Boolean);
+  cachedIds = {
+    discord: list(env.DISCORD_APPLICATION_ID, env.DISCORD_MENTION_ROLE_IDS),
+    timmy: list(env.DISCORD_TIMMY_APPLICATION_ID, env.DISCORD_TIMMY_MENTION_ROLE_IDS),
+  };
+  return cachedIds;
+}
+
+/**
+ * Pure decision: is this group message addressed to a different agent than the instance receiving it
+ * (it tags that agent's bot or role, and does not tag this one)?
+ */
+export function addressedToOtherAgent(event: InboundEvent, ids: AgentIds): boolean {
+  if (event.channelType !== 'discord' || event.message.kind !== 'chat-sdk') return false;
+  if (event.message.isMention === true || event.message.isGroup !== true) return false;
+  const instance = event.instance ?? event.channelType;
+  if (!ids[instance]) return false;
+  let text = '';
+  try {
+    const parsed = JSON.parse(event.message.content) as { text?: unknown };
+    text = typeof parsed.text === 'string' ? parsed.text : '';
+  } catch {
+    return false;
+  }
+  const tagged = new Set([...text.matchAll(/<@&?(\d+)>/g)].map((m) => m[1]));
+  if (ids[instance].some((id) => tagged.has(id))) return false; // tags this agent too
+  return Object.entries(ids).some(([name, list]) => name !== instance && list.some((id) => tagged.has(id)));
+}
+
 registerMessageInterceptor(async (event) => {
+  if (addressedToOtherAgent(event, agentIds())) return true; // not for this agent: consume it
   if (!qualifiesForDefaultAgent(event)) return false;
   // Only chats that actually have an agent wired (no auto-creation for stray channels).
   const found = getMessagingGroupWithAgentCount(event.channelType, event.platformId, DEFAULT_INSTANCE);

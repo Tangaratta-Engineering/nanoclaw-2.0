@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { InboundEvent } from './adapter.js';
-import { qualifiesForDefaultAgent } from './default-agent.js';
+import { addressedToOtherAgent, qualifiesForDefaultAgent } from './default-agent.js';
 
 function event(over: {
   text?: string;
@@ -79,5 +79,27 @@ describe('qualifiesForDefaultAgent', () => {
     expect(qualifiesForDefaultAgent(event({ isGroup: false }))).toBe(false);
     expect(qualifiesForDefaultAgent(event({ text: '   ' }))).toBe(false);
     expect(qualifiesForDefaultAgent(event({ kind: 'chat' }))).toBe(false);
+  });
+});
+
+describe('addressedToOtherAgent', () => {
+  const ids = { discord: ['100', '101'], timmy: ['200', '201'] };
+
+  it("consumes a message that tags only the other agent's bot or role", () => {
+    expect(addressedToOtherAgent(event({ text: 'plan the trip <@200>' }), ids)).toBe(true);
+    expect(addressedToOtherAgent(event({ text: '<@&201> plan the trip' }), ids)).toBe(true);
+    expect(addressedToOtherAgent(event({ text: '<@100> hi', instance: 'timmy' }), ids)).toBe(true); // symmetric
+  });
+
+  it('lets through messages that also tag this agent, or tag nobody, or tag a human', () => {
+    expect(addressedToOtherAgent(event({ text: '<@100> and <@200> meet' }), ids)).toBe(false);
+    expect(addressedToOtherAgent(event({ text: 'what is on today' }), ids)).toBe(false);
+    expect(addressedToOtherAgent(event({ text: '<@999> dinner?' }), ids)).toBe(false);
+  });
+
+  it('ignores direct messages, other channel types and already-mentions', () => {
+    expect(addressedToOtherAgent(event({ text: '<@200> hi', isGroup: false }), ids)).toBe(false);
+    expect(addressedToOtherAgent(event({ text: '<@200> hi', isMention: true }), ids)).toBe(false);
+    expect(addressedToOtherAgent(event({ text: '<@200> hi', channelType: 'telegram' }), ids)).toBe(false);
   });
 });
