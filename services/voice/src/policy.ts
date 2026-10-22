@@ -73,3 +73,30 @@ export function isForMe(text: string, wakeNames: string[], otherNames: string[])
   if (wakeNames.length) return startsWithName(text, wakeNames);
   return !startsWithName(text, otherNames);
 }
+
+const SLEEP_PHRASES = ['go to sleep', 'sleep now', 'stop listening', 'mute', 'mute yourself', 'go quiet', 'hang up', 'goodnight'];
+
+/** "Go to sleep" / "stop listening": a short utterance containing a sleep phrase. Applies to every agent in the call. */
+export function isSleepCommand(text: string): boolean {
+  const n = norm(text);
+  if (!n || n.split(' ').length > 6) return false;
+  return SLEEP_PHRASES.some((p) => n === p || n.includes(' ' + p) || n.startsWith(p + ' ') || n.endsWith(' ' + p));
+}
+
+export interface Presence {
+  /** George is in the call channel right now. */
+  georgeInChannel: boolean;
+  /** The bot currently holds a (non-destroyed) voice connection. */
+  connected: boolean;
+  /** A leave is already scheduled. */
+  leaving: boolean;
+}
+
+/** What the lifecycle loop should do: join when George is there, leave (after a grace period) when he is not. */
+export function lifecycleAction(p: Presence): 'join' | 'schedule-leave' | 'cancel-leave' | 'none' {
+  if (p.georgeInChannel) {
+    if (!p.connected) return 'join';
+    return p.leaving ? 'cancel-leave' : 'none';
+  }
+  return p.connected && !p.leaving ? 'schedule-leave' : 'none';
+}

@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Live Discord voice channel for a NanoClaw agent (listen → transcribe → agent → speak)",
+  "description": "Live Discord voice channel for a NanoClaw agent (listen \u2192 transcribe \u2192 agent \u2192 speak)",
   "scripts": {
     "start": "node --experimental-strip-types src/index.ts",
-    "test": "node --experimental-strip-types --test src/*.test.ts"
+    "test": "node --experimental-strip-types --test src/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@discordjs/voice": "0.19.2",
@@ -15,5 +16,9 @@
     "libsodium-wrappers": "^0.8.4",
     "opusscript": "^0.1.1",
     "prism-media": "1.3.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3"
   }
 }

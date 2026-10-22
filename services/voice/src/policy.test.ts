@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { isForMe, isLeadIn, startsWithName, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
+import { isForMe, isSleepCommand, lifecycleAction, isLeadIn, startsWithName, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
 
 test('stop words only when short', () => {
   for (const t of ['Stop.', 'Stop talking', 'Hold on', 'wait', 'OK stop!', 'Tiff, stop']) assert.ok(isStopCommand(t), t);
@@ -51,4 +51,18 @@ test('who answers: named agent only when addressed, default agent otherwise', ()
   assert.ok(isForMe('Tiff, what is on today', [], timmy));
   assert.ok(isForMe('What is on today', [], timmy));
   assert.ok(!isForMe('Timmy, plan Rotorua', [], timmy));
+});
+
+test('sleep commands are short and explicit', () => {
+  for (const x of ['Go to sleep', 'Tiff, go to sleep.', 'stop listening', 'Mute', 'okay hang up now']) assert.ok(isSleepCommand(x), x);
+  for (const x of ['I could not sleep last night and was listening to music all night', 'what is the weather', '']) assert.ok(!isSleepCommand(x), x);
+});
+
+test('lifecycle: join when George arrives, leave after he goes, rejoin if dropped', () => {
+  assert.equal(lifecycleAction({ georgeInChannel: true, connected: false, leaving: false }), 'join');
+  assert.equal(lifecycleAction({ georgeInChannel: true, connected: true, leaving: false }), 'none');
+  assert.equal(lifecycleAction({ georgeInChannel: true, connected: true, leaving: true }), 'cancel-leave');
+  assert.equal(lifecycleAction({ georgeInChannel: false, connected: true, leaving: false }), 'schedule-leave');
+  assert.equal(lifecycleAction({ georgeInChannel: false, connected: true, leaving: true }), 'none');
+  assert.equal(lifecycleAction({ georgeInChannel: false, connected: false, leaving: false }), 'none');
 });
