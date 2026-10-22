@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { isForMe, isSleepCommand, lifecycleAction, isLeadIn, startsWithName, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
+import { debounceFor, splitForSpeech, isForMe, isSleepCommand, lifecycleAction, isLeadIn, startsWithName, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
 
 test('stop words only when short', () => {
   for (const t of ['Stop.', 'Stop talking', 'Hold on', 'wait', 'OK stop!', 'Tiff, stop']) assert.ok(isStopCommand(t), t);
@@ -65,4 +65,18 @@ test('lifecycle: join when George arrives, leave after he goes, rejoin if droppe
   assert.equal(lifecycleAction({ georgeInChannel: false, connected: true, leaving: false }), 'schedule-leave');
   assert.equal(lifecycleAction({ georgeInChannel: false, connected: true, leaving: true }), 'none');
   assert.equal(lifecycleAction({ georgeInChannel: false, connected: false, leaving: false }), 'none');
+});
+
+test('speech is split so the first sentence can start early', () => {
+  const chunks = splitForSpeech('Sure thing. The flights are about seventeen hundred dollars. Cheapest is out of Sydney on Friday. Want me to hold it?');
+  assert.ok(chunks.length >= 2);
+  assert.equal(chunks.join(' '), 'Sure thing. The flights are about seventeen hundred dollars. Cheapest is out of Sydney on Friday. Want me to hold it?');
+  assert.deepEqual(splitForSpeech('Okay.'), ['Okay.']);
+  assert.ok(chunks[0].length >= 40);
+});
+
+test('debounce is short for finished sentences and longer for trailing ones', () => {
+  assert.equal(debounceFor('Can you check my calendar for today?'), 1000);
+  assert.equal(debounceFor('So what I want to do is'), 2000);
+  assert.equal(debounceFor('Yes.'), 2000);
 });
