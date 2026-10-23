@@ -28,6 +28,7 @@ MSGS = {
     "m5": msg("m5", "No Reply <noreply@bank.com>", "Your statement", "Hello", atts=["statement.pdf"]),
     "m6": msg("m6", "Duolingo <hello@duolingo.com>", "Practice time", "learn"),
     "m8": msg("m8", "Flick <no-reply@flick.com.au>", "Your Pest Control Service is Due Soon", "book now", labels=["CATEGORY_PROMOTIONS"], extra=[("List-Unsubscribe", "<x>")]),
+    "m9": msg("m9", "George <george@example.com>", "[NC-REMINDER] Pick up the book", '{"title": "Pick up the book", "due": "2026-10-24T09:00+11:00", "notes": "payment due"}'),
     "m7": msg("m7", "Sys <noreply@service.com>", "Verification code", "123456"),
 }
 
@@ -61,7 +62,8 @@ class T(unittest.TestCase):
         kept = {e["id"] for e in ds["emails"]}
         self.assertEqual(kept, {"m1", "m3", "m4", "m5", "m8"})  # invoice, person, financial-looking promo, attachment, due-soon notice
         self.assertTrue(out["wakeAgent"])
-        self.assertEqual(ds["counts"]["skipped"], 3)
+        self.assertEqual(ds["counts"]["skipped"], 4)
+        self.assertNotIn("m9", kept)  # NanoClaw's own phone-reminder email, even though its text mentions a payment
 
     def test_hints_and_replied(self):
         _, ds, _ = self.run_fetch()

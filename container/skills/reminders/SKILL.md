@@ -23,16 +23,20 @@ If the tool says phone reminders are not set up, fall back to a Discord reminder
 
 ## Setup on the iPhone (once, about 10 minutes)
 
-1. Use a mailbox that **pushes** to the phone: an iCloud Mail address (Settings → your name → iCloud → Mail on; an `@icloud.com` address). Put that address in `config.json` as `to`. (Gmail also works, but iOS only fetches it every ~15 minutes.)
-2. Shortcuts app → **Automation** → **+** → **Email**. Sender: George's Gmail address. Subject contains: `[NC-REMINDER]`. Account: the mailbox above. Choose **Run Immediately** (turn off "Ask Before Running") and **Next**.
-3. Build the shortcut, in this order:
-   1. **Get Text from Input** (input: Shortcut Input) — the email body.
-   2. **Get Dictionary from Input** (input: Text).
-   3. **Get Dictionary Value**: key `title` → rename the result "Title".
-   4. **Get Dictionary Value**: key `due` → rename "Due".
-   5. **Get Dates from Input** (input: Due) → rename "DueDate".
-   6. **Get Dictionary Value**: key `notes` → rename "Notes" (may be empty).
-   7. **Add New Reminder**: Title = Title; tap the arrow to show more: List = Reminders, Notes = Notes, **Alert/Due = DueDate**.
-4. Save, then test from NanoClaw: ask Tiff to "add a test reminder in 5 minutes". A reminder appears in the app, and the phone alerts at the due time.
+The reminder email is sent from George's Gmail address **to the same address** (`config.json`: `{"to": "george.cains@gmail.com"}`), so the iPhone Mail app must have that Gmail account added (Settings → Apps → Mail → Mail Accounts). Gmail reaches Mail by fetch, so a reminder can take up to ~15 minutes to appear; that is fine for reminders set in advance, not for "in 5 minutes". The inbox triage ignores these emails.
+
+1. Shortcuts app → **Automation** tab → **+** → **Email**.
+2. **Sender**: choose George's own address (george.cains@gmail.com). **Subject Contains**: `[NC-REMINDER]`. **Account**: the Gmail account. Select **Run Immediately** (not "Run After Confirmation") → **Next** → **New Blank Automation**.
+3. Add these actions, in this order (search for each by name):
+   1. **Get Text from Input** — Input: *Shortcut Input* (the email).
+   2. **Get Dictionary from Input** — Input: *Text* (the result of step 1).
+   3. **Get Dictionary Value** — Key `title`. (Tap the result and rename it "Title".)
+   4. **Get Dictionary Value** — Key `due`, Dictionary: *Dictionary* from step 2. Rename "Due".
+   5. **Get Dates from Input** — Input: *Due* → rename "DueDate".
+   6. **Get Dictionary Value** — Key `notes`, Dictionary: *Dictionary* from step 2. Rename "Notes" (it can be empty).
+   7. **Add New Reminder** — Title: *Title*; tap the arrow to show more: List: Reminders; Notes: *Notes*; **Date/Alert: DueDate**.
+4. **Done**. Then ask NanoClaw for a test reminder.
+
+If the email body does not come through in step 1, the fallback is to read the **Subject** and **Body** with *Get Details of Email* instead.
 
 Tests: `python3 container/skills/reminders/scripts/test_remind.py`.
