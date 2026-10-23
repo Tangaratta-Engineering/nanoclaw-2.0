@@ -17,10 +17,12 @@ test('noise rules differ while she is speaking', () => {
   assert.ok(!isNoise('what about the tents', 'good', true));
 });
 
-test('summary keeps it short and points to chat', () => {
+test('summary cuts only very long replies and points to chat', () => {
   assert.equal(voiceSummary('Short reply.'), 'Short reply.');
+  const explanation = 'This is a sentence that explains one part of the answer in some detail. '.repeat(12); // ~860 chars
+  assert.equal(voiceSummary(explanation), explanation.trim()); // a real explanation is spoken in full
   const long = 'First sentence is here. Second sentence follows. ' + 'More words. '.repeat(60);
-  const s = voiceSummary(long);
+  const s = voiceSummary(long, 280);
   assert.ok(s.length < 330);
   assert.ok(s.endsWith('The rest is in the chat.'));
   assert.ok(s.startsWith('First sentence is here.'));
@@ -75,8 +77,14 @@ test('speech is split so the first sentence can start early', () => {
   assert.ok(chunks[0].length >= 40);
 });
 
-test('debounce is short for finished sentences and longer for trailing ones', () => {
-  assert.equal(debounceFor('Can you check my calendar for today?'), 1000);
-  assert.equal(debounceFor('So what I want to do is'), 2000);
-  assert.equal(debounceFor('Yes.'), 2000);
+test('debounce waits longer when the pause sounds unfinished', () => {
+  assert.equal(debounceFor('Can you check my calendar for today?'), 2000);
+  assert.equal(debounceFor('Right, now...'), 4500);
+  assert.equal(debounceFor('Right, now'), 4000);
+  assert.equal(debounceFor('So what I want to do is'), 4500);
+  assert.equal(debounceFor('I need to plan the trip and,'), 4500);
+  assert.equal(debounceFor('I was thinking about the trip and then'), 4500);
+  assert.equal(debounceFor('I want to book the flights for the family to Rotorua for the trail race'), 3500);
+  assert.equal(debounceFor(Array(26).fill('word').join(' ') + '.'), 3000);
+  assert.equal(debounceFor('Yes.'), 4000);
 });

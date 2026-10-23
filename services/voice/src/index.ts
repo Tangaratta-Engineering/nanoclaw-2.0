@@ -24,13 +24,14 @@ import { sendToAgent } from './agent.ts';
 import { durationSecs, rms, toMono16k } from './audio.ts';
 import { loadConfig } from './config.ts';
 import { OutboxWatcher } from './outbox.ts';
-import { debounceFor, splitForSpeech, isForMe, isLeadIn, isNoise, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
+import { splitForSpeech, isForMe, isLeadIn, isNoise, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
 import { transcribe } from './stt.ts';
+import { SendGate } from './gate.ts';
 import { TtsWorker } from './tts.ts';
 
 const MIN_SECS = 0.5;
 const MIN_RMS = 0.005;
-const SILENCE_MS = 1100; // let a thought finish before cutting the clip
+const SILENCE_MS = 1300; // let a thought finish before cutting the clip
 const MAX_SPOKEN_PER_TURN = 1; // agent messages spoken per turn; the rest stay as text
 const TURN_GAP_MS = 15_000; // a message this long after the last spoken one starts a new turn (e.g. a task result)
 
@@ -49,8 +50,8 @@ let lastClipEnd = 0;
 let turnStart = 0; // when George's last clip ended, for the latency log
 let lastSpokenAt = 0;
 let fullReadout = false;
-const utterBuf: string[] = [];
-let debounce: NodeJS.Timeout | null = null;
+const PATIENCE = Number(process.env.VOICE_PATIENCE || '1'); // scale the waits: 0.7 = quicker, 1.5 = more patient
+const gate = new SendGate((said) => void flushUtterances(said), PATIENCE);
 const pending: string[] = []; // things George said while she was talking, sent when she finishes
 
 const busy = () => speaking || speechQueue.length > 0;
@@ -118,11 +119,20 @@ outbox.onText = (text) => {
   if (spokenThisTurn >= (fullReadout ? 4 : MAX_SPOKEN_PER_TURN)) return; // long replies live in the text chat
   spokenThisTurn++;
   lastSpokenAt = Date.now();
-  speechQueue.push(...splitForSpeech(fullReadout ? voiceSummary(text, 900) : voiceSummary(text)));
+  speechQueue.push(...splitForSpeech(fullReadout ? voiceSummary(text, 2400) : voiceSummary(text)));
   void drainSpeech();
 };
 
+/** Caller has already called gate.transcribeStart(); this ends it. */
 async function handleUtterance(pcm: Buffer): Promise<void> {
+  try {
+    await processUtterance(pcm);
+  } finally {
+    gate.transcribeEnd(); // restarts the wait now that this clip has been dealt with
+  }
+}
+
+async function processUtterance(pcm: Buffer): Promise<void> {
   const samples = toMono16k(pcm);
   if (durationSecs(samples) < MIN_SECS || rms(samples) < MIN_RMS) return;
   const t0 = Date.now();
@@ -134,7 +144,7 @@ async function handleUtterance(pcm: Buffer): Promise<void> {
     log('sleep command: no longer listening until George unmutes or rejoins');
     asleep = true;
     stopSpeaking();
-    utterBuf.length = 0;
+    gate.reset();
     if (!cfg.wakeNames.length || startsWithName(text, cfg.wakeNames)) {
       speechQueue.push("Okay, I've stopped listening. Unmute yourself or rejoin the channel to wake me.");
       void drainSpeech();
@@ -151,23 +161,21 @@ async function handleUtterance(pcm: Buffer): Promise<void> {
     log('not for me:', text.slice(0, 60));
     return;
   }
-  if (isNoise(text, reliability, wasBusy)) return;
+  if (isNoise(text, reliability, wasBusy)) {
+    gate.filler(); // a filler or breath while composing a thought: keep waiting
+    return;
+  }
   if (reliability === 'poor') {
     speechQueue.push("Sorry, I didn't catch that. Could you say it again?");
     void drainSpeech();
     return;
   }
   lastClipEnd = clipEnded;
-  utterBuf.push(text);
-  if (debounce) clearTimeout(debounce);
-  debounce = setTimeout(() => void flushUtterances(), debounceFor(text));
+  gate.add(text);
 }
 
 /** Send everything George said in one go once he has paused long enough. */
-async function flushUtterances(): Promise<void> {
-  debounce = null;
-  const said = utterBuf.splice(0).join(' ').trim();
-  if (!said) return;
+async function flushUtterances(said: string): Promise<void> {
   if (busy()) {
     pending.push(said); // low tolerance for interruption: she finishes her thought first
     return;
@@ -201,16 +209,21 @@ function listen(conn: VoiceConnection): void {
   conn.receiver.speaking.on('start', (userId) => {
     if (userId !== cfg.userId || asleep || active.has(userId)) return;
     active.add(userId);
+    gate.captureStart(); // he is talking again: nothing is sent until this clip is transcribed
     const opus = conn.receiver.subscribe(userId, { end: { behavior: EndBehaviorType.AfterSilence, duration: SILENCE_MS } });
     const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
     const chunks: Buffer[] = [];
     opus.pipe(decoder);
     decoder.on('data', (c: Buffer) => chunks.push(c));
     decoder.on('end', () => {
-      active.delete(userId);
+      if (!active.delete(userId)) return; // already handled by the error path
+      gate.transcribeStart(); // before captureEnd, so there is no gap in which the wait could restart
+      gate.captureEnd();
       handleUtterance(Buffer.concat(chunks)).catch((e) => log('utterance error', String(e).slice(0, 200)));
     });
-    opus.on('error', () => active.delete(userId));
+    opus.on('error', () => {
+      if (active.delete(userId)) gate.captureEnd();
+    });
   });
 }
 
@@ -218,6 +231,7 @@ async function join(): Promise<void> {
   if (joining || alive()) return;
   joining = true;
   try {
+    gate.reset();
     const conn = joinVoiceChannel({
       channelId: cfg.channelId,
       guildId: cfg.guildId,
@@ -255,6 +269,7 @@ async function join(): Promise<void> {
 
 function leave(): void {
   leaveTimer = null;
+  gate.reset(); // any capture in flight died with the connection
   stopSpeaking();
   connection?.destroy();
   connection = null;

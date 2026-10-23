@@ -39,6 +39,7 @@ export class TtsWorker {
         '-v', `${c.piperHome}:/piper:ro`,
         '-v', `${this.dir}:/out`,
         '-e', 'PIPER_HOME=/piper',
+        '-e', 'SPEAK_MAX_CHARS=2600', // the worker's own cap; the service already limits what it sends
         '--entrypoint', 'python3',
         c.agentImage,
         '/app/skills/speak/scripts/speak_server.py', '--voice', c.voiceId,
