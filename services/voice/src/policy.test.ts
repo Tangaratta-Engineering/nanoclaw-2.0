@@ -75,8 +75,14 @@ test('speech is split so the first sentence can start early', () => {
   assert.ok(chunks[0].length >= 40);
 });
 
-test('debounce is short for finished sentences and longer for trailing ones', () => {
-  assert.equal(debounceFor('Can you check my calendar for today?'), 1000);
-  assert.equal(debounceFor('So what I want to do is'), 2000);
-  assert.equal(debounceFor('Yes.'), 2000);
+test('debounce waits longer when the pause sounds unfinished', () => {
+  assert.equal(debounceFor('Can you check my calendar for today?'), 2000);
+  assert.equal(debounceFor('Right, now...'), 4500);
+  assert.equal(debounceFor('Right, now'), 4000);
+  assert.equal(debounceFor('So what I want to do is'), 4500);
+  assert.equal(debounceFor('I need to plan the trip and,'), 4500);
+  assert.equal(debounceFor('I was thinking about the trip and then'), 4500);
+  assert.equal(debounceFor('I want to book the flights for the family to Rotorua for the trail race'), 3500);
+  assert.equal(debounceFor(Array(26).fill('word').join(' ') + '.'), 3000);
+  assert.equal(debounceFor('Yes.'), 4000);
 });

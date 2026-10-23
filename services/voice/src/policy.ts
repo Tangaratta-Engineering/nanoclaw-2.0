@@ -120,10 +120,21 @@ export function splitForSpeech(text: string, minLen = 40): string[] {
   return out;
 }
 
-/** How long to wait for a continuation after a transcript: short when it sounds finished, longer when it trails off. */
+// Words a sentence cannot end on: if the transcript stops on one, the speaker is mid-thought.
+const OPEN_ENDINGS = new Set(['and', 'but', 'so', 'because', 'then', 'or', 'like', 'um', 'uh', 'er', 'well', 'the', 'a', 'an', 'to', 'of', 'with', 'that', 'which', 'if', 'when', 'my', 'is', 'are', 'was', 'i', 'it', 'for', 'on', 'in', 'at', 'also', 'plus', 'as', 'about', 'what', 'how', 'where', 'who']);
+
+/**
+ * How long to wait for a continuation after a transcript. A pause that sounds unfinished
+ * (trailing "...", a comma, a dangling "and", only a word or two) gets a long wait; a complete
+ * sentence a shorter one; a long passage a little longer because speakers tend to continue.
+ */
 export function debounceFor(text: string): number {
   const t = text.trim();
-  const words = t.split(/\s+/).length;
-  if (/[.?!]["')]*$/.test(t) && words >= 3) return 1000;
-  return 2000;
+  const words = t.split(/\s+/).filter(Boolean);
+  const last = (words[words.length - 1] ?? '').toLowerCase().replace(/[^a-z']/g, '');
+  if (/(\.{2,}|…|[,;:\u2014-])["')]*$/.test(t)) return 4500;
+  if (words.length <= 3) return 4000;
+  if (OPEN_ENDINGS.has(last)) return 4500;
+  if (/[.?!]["')]*$/.test(t)) return words.length >= 25 ? 3000 : 2000;
+  return 3500;
 }
