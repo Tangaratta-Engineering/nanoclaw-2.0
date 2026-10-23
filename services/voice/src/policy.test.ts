@@ -17,10 +17,12 @@ test('noise rules differ while she is speaking', () => {
   assert.ok(!isNoise('what about the tents', 'good', true));
 });
 
-test('summary keeps it short and points to chat', () => {
+test('summary cuts only very long replies and points to chat', () => {
   assert.equal(voiceSummary('Short reply.'), 'Short reply.');
+  const explanation = 'This is a sentence that explains one part of the answer in some detail. '.repeat(12); // ~860 chars
+  assert.equal(voiceSummary(explanation), explanation.trim()); // a real explanation is spoken in full
   const long = 'First sentence is here. Second sentence follows. ' + 'More words. '.repeat(60);
-  const s = voiceSummary(long);
+  const s = voiceSummary(long, 280);
   assert.ok(s.length < 330);
   assert.ok(s.endsWith('The rest is in the chat.'));
   assert.ok(s.startsWith('First sentence is here.'));

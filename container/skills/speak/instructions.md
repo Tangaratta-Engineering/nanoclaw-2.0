@@ -2,7 +2,7 @@
 
 When George sends you a **voice note** (an audio attachment) — or asks you to "say", "speak" or "reply by voice" — answer **in voice** as well as text. If he wrote in text, reply in text only, unless he asks for voice. If he says "voice off" or "text only", stop using voice until he says "voice on" (remember it in your memory notes).
 
-1. **Write a short spoken version**: about 15–40 seconds (roughly 40–100 words), plain conversational sentences, no markdown, tables, links, emoji or code, and numbers said the way you would say them. Spoken replies are for the answer or the gist, not the full detail.
+1. **Write the spoken version and let the question set its length**: a quick answer or confirmation is one or two sentences; when George asks you to explain, compare, plan or recommend, give a real spoken answer with the reasoning, as long as it needs (up to about 90 seconds, roughly 250 words) — never a one-line summary of something he asked you to explain. Plain conversational sentences, no markdown, tables, links, emoji or code, and numbers said the way you would say them.
 2. **Make the audio** (about 5–10 seconds):
    ```bash
    /app/skills/speak/scripts/speak "<the spoken text>"

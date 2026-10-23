@@ -119,7 +119,7 @@ outbox.onText = (text) => {
   if (spokenThisTurn >= (fullReadout ? 4 : MAX_SPOKEN_PER_TURN)) return; // long replies live in the text chat
   spokenThisTurn++;
   lastSpokenAt = Date.now();
-  speechQueue.push(...splitForSpeech(fullReadout ? voiceSummary(text, 900) : voiceSummary(text)));
+  speechQueue.push(...splitForSpeech(fullReadout ? voiceSummary(text, 2400) : voiceSummary(text)));
   void drainSpeech();
 };
 

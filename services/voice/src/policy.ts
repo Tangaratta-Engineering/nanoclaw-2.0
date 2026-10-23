@@ -28,8 +28,8 @@ export function isNoise(text: string, reliability: string, whileSpeaking: boolea
   return false;
 }
 
-/** Short spoken version of a reply: up to two sentences / ~280 chars; the rest is in the text chat. */
-export function voiceSummary(text: string, max = 280): string {
+/** Speakable version of a reply: code spans removed; very long replies are cut at a sentence end (default ~1,600 characters, about 100 s of speech) with a pointer to the chat. */
+export function voiceSummary(text: string, max = 1600): string {
   // Code spans (file paths, commands) are not speakable: drop them.
   const clean = text.replace(/`[^`]*`/g, '').replace(/\s+/g, ' ').replace(/\s+([.,;:!?])/g, '$1').trim();
   if (clean.length <= max) return clean;
