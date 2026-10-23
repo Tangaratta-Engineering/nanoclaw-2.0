@@ -48,6 +48,8 @@ def hints(subject, body):
 
 def decide(entry, rules):
     """Return (keep, reason). Anything financial is always kept."""
+    if entry["subject"].startswith("[NC-REMINDER]"):
+        return False, "phone reminder sent by NanoClaw itself"
     h = entry["hints"]
     if h["financial"] or entry["attachments"]:
         return True, "financial words or attachment"
