@@ -84,6 +84,20 @@ def walk(part):
         yield from walk(p)
 
 
+# Some systems (booking engines, receipts) send a placeholder as the plain-text part and the real
+# content only as HTML. Treat these as "no usable plain text".
+_PLACEHOLDER = re.compile(r"^(no content|this (email|message) (requires|contains) html.*|view (this|in) (email )?(in )?(your )?browser.*|your email (client|app) (does not|doesn't) support html.*|please enable html.*)$", re.I | re.S)
+
+
+def _usable(plain, htm):
+    """Prefer the plain-text part, unless it is a placeholder or far shorter than the HTML text."""
+    if not plain:
+        return False
+    if _PLACEHOLDER.match(plain.strip().rstrip(".")):
+        return False
+    return not (htm and len(plain) < 60 and len(htm) > 4 * len(plain))
+
+
 def body_text(msg, limit=1500):
     plain, htm = "", ""
     for p in walk(msg.get("payload", {})):
@@ -98,7 +112,7 @@ def body_text(msg, limit=1500):
             plain = clean(txt)
         elif p.get("mimeType") == "text/html" and not htm:
             htm = html_to_text(txt)
-    text = plain or htm
+    text = plain if _usable(plain, htm) else (htm or plain)
     text = re.sub(r"\n>.*", "", text)  # quoted reply lines
     return text[:limit]
 

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Wrapper: runs inbox_mail.py with the container's Python. See SKILL.md.
+exec python3 "$(dirname "$0")/inbox_mail.py" "$@"
