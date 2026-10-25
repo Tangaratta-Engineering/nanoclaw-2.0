@@ -45,11 +45,16 @@ Enforced in code: replies only, to people already on the thread, plain text; `se
 ```bash
 C=/app/skills/inbox-triage/scripts/inbox-calendar
 $C agenda [--offset 1] [--json]     # today's (or tomorrow's) calendar: APPOINTMENTS first, routine events on one line
+$C week [--start 2026-11-02] [--days 7] [--json]   # the whole week: appointments per day, clashes, possible duplicates, all-day events, regular routine on one line
 $C learn --title "Henry medication" --as routine        # or --as appointment; remembered for good
 $C add --title "Physio" --start 2026-10-23T08:30 --end 2026-10-23T09:30 --location "..." --source-link <gmail link> --key <thread id>
 ```
 
 `agenda` reads George's primary and Family calendars (change them in `calendar-rules.json` next to the datasets). It decides what is a real appointment and what is a standing routine event: your explicit rules win; otherwise anything with appointment words (Dr, dentist, physio, meeting…), a location or other people is an appointment, and repeating events without those (and titles seen five or more times in the last 30 days) are routine. `add` never creates a duplicate (same key, or a same-day event with a similar title) and refuses dates in the past; it can only add, never delete.
+
+## `weekly-pack` (the Sunday-night briefing's scheduled-task script)
+
+`scripts/weekly-pack` prints `{"wakeAgent": true, "data": {"calendar_week": …, "ledger_open_items": {"Open": …, "Awaiting approval": …}}}`: next week's calendar (Monday to Sunday) and the open items in the Notion Action ledger, trimmed to type, item, due date, amount and payee. Each part fails on its own, so a Notion or Calendar error is reported in the data instead of cancelling the briefing.
 
 ## Setup (host, once)
 
