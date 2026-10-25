@@ -38,15 +38,23 @@ def runner(cart_override=None):
 
 class T(unittest.TestCase):
     def test_cart_link_summary_and_verification(self):
-        out = s.build(CFG, [("tissues", 2), ("towels", 2)], runner())
+        out = s.as_text(s.build(CFG, [("tissues", 2), ("towels", 2)], runner()))
         self.assertIn("2 x Tissues (12 Boxes) $27.00 = $54.00", out)
         self.assertIn("Subtotal: $96.00", out); self.assertIn("exactly these items, subtotal $96.00", out)
         self.assertIn("Link: https://shop.example.com/cart/111:2,222:2", out)
         self.assertIn("Nothing has been bought", out)
         self.assertIn("was $26.00 last time", out)  # price change is surfaced
 
+    def test_card_has_a_link_button_and_no_bare_link_in_the_text(self):
+        card = s.as_card(s.build(CFG, [("tissues", 2), ("towels", 2)], runner()))
+        c = card["card"]
+        self.assertEqual(c["actions"], [{"label": "Open cart and pay", "url": "https://shop.example.com/cart/111:2,222:2", "style": "primary"}])
+        self.assertNotIn("https://", c["description"])  # the link lives only in the button
+        self.assertIn("Subtotal: $96.00", c["description"]); self.assertIn("Nothing has been bought", c["description"])
+        self.assertIn("Link: https://shop.example.com/cart/111:2,222:2", card["fallbackText"])  # plain-text fallback keeps the link
+
     def test_usual_order_skips_items_marked_out(self):
-        args = NS(shop="x", usual=True, items=[], no_verify=False)
+        args = NS(shop="x", usual=True, items=[], no_verify=False, card=False)
         s.load_shop = lambda name: CFG
         out = s.cmd_cart(args, runner())
         self.assertIn("3 x Tissues", out); self.assertIn("1 x Toilet Paper (48 Rolls)", out); self.assertNotIn("Paper Towels", out)

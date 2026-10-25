@@ -129,13 +129,26 @@ def build(cfg, wanted, runner=subprocess.run, verify=True):
                 os.unlink(jar)
             except OSError:
                 pass
-    out = [f"Cart for {cfg.get('label', cfg['store'])} (live prices):"] + [f"  {l}" for l in lines]
-    out.append(f"Subtotal: ${subtotal:.2f}. Shipping, discounts and GST are shown at checkout.")
+    label = cfg.get("label", cfg["store"])
+    body = [f"{l}" for l in lines] + [f"Subtotal: ${subtotal:.2f} before shipping, discounts and GST (shown at checkout)."]
     if check:
-        out.append(check)
-    out += [f"Price change: {n}" for n in notes]
-    out += [f"Link: {link}", "Open the link, check the checkout page, and pay there. Nothing has been bought."]
-    return "\n".join(out)
+        body.append(check)
+    body += [f"Price change: {n}" for n in notes]
+    return {"label": label, "lines": lines, "subtotal": subtotal, "check": check, "notes": notes, "link": link, "body": body}
+
+
+def as_text(r):
+    return "\n".join([f"Cart for {r['label']} (live prices):"] + [f"  {l}" for l in r["body"]] + [f"Link: {r['link']}", "Open the link, check the checkout page, and pay there. Nothing has been bought."])
+
+
+def as_card(r):
+    """The exact payload for the send_card tool: the summary as text and the link as a tappable button."""
+    return {
+        "card": {"title": f"Cart ready: {r['label']}",
+                 "description": "\n".join(r["body"] + ["Nothing has been bought. Tap the button, check the checkout page, and pay there."]),
+                 "actions": [{"label": "Open cart and pay", "url": r["link"], "style": "primary"}]},
+        "fallbackText": as_text(r),
+    }
 
 
 def cmd_catalog(a, runner=subprocess.run):
@@ -154,7 +167,8 @@ def cmd_cart(a, runner=subprocess.run):
         wanted = [(k, int(v.get("usual_qty", 1))) for k, v in cfg.get("items", {}).items() if v.get("in_usual_order", True)]
     else:
         wanted = parse_items(cfg, a.items)
-    return build(cfg, wanted, runner, verify=not a.no_verify)
+    r = build(cfg, wanted, runner, verify=not a.no_verify)
+    return json.dumps(as_card(r), ensure_ascii=False) if a.card else as_text(r)
 
 
 def main(argv=None, runner=subprocess.run):
@@ -163,6 +177,7 @@ def main(argv=None, runner=subprocess.run):
     s = sub.add_parser("catalog"); s.add_argument("shop")
     s = sub.add_parser("cart"); s.add_argument("shop"); s.add_argument("items", nargs="*", help="nickname or nickname=qty, e.g. tissues=3 paper_towels")
     s.add_argument("--usual", action="store_true", help="every item marked in_usual_order, at its usual quantity"); s.add_argument("--no-verify", action="store_true")
+    s.add_argument("--card", action="store_true", help="print the send_card payload (summary + a tappable link button) instead of plain text")
     a = ap.parse_args(argv)
     try:
         print({"catalog": cmd_catalog, "cart": cmd_cart}[a.cmd](a, runner))

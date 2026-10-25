@@ -14,6 +14,14 @@ $S cart whogivesacrap --usual                       # every item marked in_usual
 $S catalog whogivesacrap                            # what the store sells now: handle | variant | price | stock
 ```
 
+**Send the result as a card with a tappable button, not as text.** Add `--card` and pass the printed JSON straight to the `send_card` tool (its `card` and `fallbackText` fields, unchanged):
+
+```bash
+$S cart whogivesacrap tissues=2 kitchen_paper=2 --card     # prints {"card": {...with a link button...}, "fallbackText": "..."}
+```
+
+A bare cart URL contains `:` and `,`, which chat apps often fail to link; the button always works. In a live voice call, say you have sent the cart to Discord instead of reading the link.
+
 The output lists each line with the live price, the subtotal, a **store check** (the tool opens the link, reads the store's own cart back and confirms it holds exactly those items), any price changes since the last order, and the link. Send George all of it. He opens the link, lands on the store's checkout page with the cart filled, checks it and pays.
 
 ## Rules
