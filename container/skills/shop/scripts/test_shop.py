@@ -53,6 +53,17 @@ class T(unittest.TestCase):
         self.assertIn("Subtotal: $96.00", c["description"]); self.assertIn("Nothing has been bought", c["description"])
         self.assertIn("Link: https://shop.example.com/cart/111:2,222:2", card["fallbackText"])  # plain-text fallback keeps the link
 
+    def test_links_kind_gives_product_page_buttons_and_never_fetches(self):
+        cfg = {"store": "www.example.com", "label": "Beans", "kind": "links", "items": {
+            "king_30": {"label": "King St capsules, 30 pack", "url": "https://www.example.com/p/king/AAA", "usual_qty": 1, "note": "usual"},
+            "evil": {"label": "Other", "url": "https://evil.example.net/x"}}}
+        boom = lambda *a, **k: (_ for _ in ()).throw(AssertionError("a links shop must not make network calls"))
+        card = s.as_card(s.build(cfg, [("king_30", 1)], boom))
+        self.assertEqual(card["card"]["actions"], [{"label": "Open: King St capsules, 30 pack", "url": "https://www.example.com/p/king/AAA", "style": "primary"}])
+        self.assertIn("cannot pre-fill a cart", card["card"]["description"]); self.assertIn("Nothing has been bought", card["card"]["description"])
+        with self.assertRaises(s.ShopError):
+            s.build(cfg, [("evil", 1)], boom)  # a link to any other host is refused
+
     def test_usual_order_skips_items_marked_out(self):
         args = NS(shop="x", usual=True, items=[], no_verify=False, card=False)
         s.load_shop = lambda name: CFG

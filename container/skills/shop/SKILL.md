@@ -41,6 +41,13 @@ Create `<data dir>/<name>.json` (default data dir `/workspace/projects/.nanoclaw
  "items": {"tissues": {"handle": "product-handle", "variant": "12 Boxes", "usual_qty": 3, "last_price": 27.0, "in_usual_order": true}}}
 ```
 
-`handle` is the product's URL name; `variant` is a fragment of the variant title (omit when the product has one). Find handles with `shop catalog`. Work out the usual items and quantities from the shop's order confirmation emails (`inbox-mail search`). Only Shopify stores work this way (`/products.json` and `/cart/<variant id>:<qty>` links); other platforms need their own method.
+`handle` is the product's URL name; `variant` is a fragment of the variant title (omit when the product has one). Find handles with `shop catalog`. Work out the usual items and quantities from the shop's order confirmation emails (`inbox-mail search`). Only Shopify stores work this way (`/products.json` and `/cart/<variant id>:<qty>` links). Check a new store first: `<store>/products.json` and `<store>/cart.js` should return JSON.
+
+**Stores that cannot be pre-filled** (Salesforce, Magento, custom builds: no cart link, product data only appears after the page runs in a browser) use `"kind": "links"`: each item has a `label` and the `url` of its product page with the pack size or variant already selected (find it with `agent-browser`, or the store's `sitemap-product-*.xml`). `shop cart <shop> <item>` then sends a card with one button per item, and says plainly that the cart is not pre-filled and prices are not checked. The URL must be on the shop's own domain.
+
+```json
+{"store": "www.example.com", "label": "Example", "kind": "links",
+ "items": {"beans_30": {"label": "House blend capsules, 30 pack", "url": "https://www.example.com/product/house-blend/AAA", "in_usual_order": true}}}
+```
 
 Tests: `python3 container/skills/shop/scripts/test_shop.py`.

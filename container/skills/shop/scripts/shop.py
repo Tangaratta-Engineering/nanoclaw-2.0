@@ -94,7 +94,26 @@ def parse_items(cfg, pairs):
     return out
 
 
+def build_links(cfg, wanted):
+    """Shops whose carts cannot be pre-filled from a link (not Shopify): give a link to each product page, pack size already chosen."""
+    host = cfg["store"]
+    lines, buttons = [], []
+    for key, qty in wanted:
+        spec = cfg.get("items", {}).get(key)
+        if spec is None:
+            raise ShopError(f"unknown item '{key}' (known: {', '.join(sorted(cfg.get('items', {}))) or 'none'})")
+        m = re.match(r"https://([^/]+)/", spec.get("url", ""))
+        if not m or m.group(1) != host:
+            raise ShopError(f"'{key}' needs a https://{host}/... url in the shop config")
+        lines.append(f"{spec.get('label', key)}" + (f": {spec['note']}" if spec.get("note") else ""))
+        buttons.append({"label": f"Open: {spec.get('label', key)}"[:80], "url": spec["url"]})
+    body = lines + [f"{cfg.get('label', host)} cannot pre-fill a cart from a link. Each button opens the right product page with the pack size already selected; set the quantity, tap Add to cart, and pay at checkout. Prices and stock are not checked here (the site only shows them in a browser)."]
+    return {"label": cfg.get("label", host), "lines": lines, "subtotal": None, "check": "", "notes": [], "link": buttons[0]["url"], "buttons": buttons, "body": body}
+
+
 def build(cfg, wanted, runner=subprocess.run, verify=True):
+    if cfg.get("kind") == "links":
+        return build_links(cfg, wanted)
     prods = products(cfg, runner)
     lines, parts, subtotal, notes = [], [], 0.0, []
     for key, qty in wanted:
@@ -138,11 +157,16 @@ def build(cfg, wanted, runner=subprocess.run, verify=True):
 
 
 def as_text(r):
+    if r.get("buttons"):
+        return "\n".join([f"Links for {r['label']}:"] + [f"  {l}" for l in r["body"]] + [f"{b['label']}: {b['url']}" for b in r["buttons"]] + ["Nothing has been bought."])
     return "\n".join([f"Cart for {r['label']} (live prices):"] + [f"  {l}" for l in r["body"]] + [f"Link: {r['link']}", "Open the link, check the checkout page, and pay there. Nothing has been bought."])
 
 
 def as_card(r):
     """The exact payload for the send_card tool: the summary as text and the link as a tappable button."""
+    if r.get("buttons"):
+        return {"card": {"title": f"Ready to order: {r['label']}", "description": "\n".join(r["body"] + ["Nothing has been bought."]),
+                         "actions": [dict(b, style="primary") for b in r["buttons"]]}, "fallbackText": as_text(r)}
     return {
         "card": {"title": f"Cart ready: {r['label']}",
                  "description": "\n".join(r["body"] + ["Nothing has been bought. Tap the button, check the checkout page, and pay there."]),
@@ -153,6 +177,8 @@ def as_card(r):
 
 def cmd_catalog(a, runner=subprocess.run):
     cfg = load_shop(a.shop)
+    if cfg.get("kind") == "links":
+        return "\n".join(f"{k} | {v.get('label', k)} | {v.get('url')}" for k, v in cfg.get("items", {}).items())
     lines = []
     for p in products(cfg, runner):
         for v in p["variants"]:
