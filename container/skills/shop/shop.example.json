@@ -1,0 +1,9 @@
+{
+  "store": "shop.example.com",
+  "label": "Example Shop",
+  "notes": "Describe the usual pattern here, for example: orders every 8 weeks; item A every time, item B sometimes.",
+  "items": {
+    "tissues": {"handle": "tissues-12-boxes", "variant": "12 Boxes", "usual_qty": 3, "last_price": 27.0, "in_usual_order": true},
+    "toilet_paper": {"handle": "toilet-paper", "variant": "48", "usual_qty": 1, "last_price": 66.0, "in_usual_order": false}
+  }
+}
