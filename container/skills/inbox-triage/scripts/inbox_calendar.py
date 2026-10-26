@@ -119,6 +119,8 @@ def main(argv=None, run=subprocess.run):
     s = sub.add_parser("agenda", help="appointments vs routine for a day (default today)")
     s.add_argument("--offset", type=int, default=0, help="days from today (1 = tomorrow)")
     s.add_argument("--json", action="store_true")
+    s = sub.add_parser("week", help="the coming week day by day (default: the week starting Monday)")
+    s.add_argument("--start", help="first day, YYYY-MM-DD"); s.add_argument("--days", type=int, default=7); s.add_argument("--json", action="store_true")
     s = sub.add_parser("learn", help="remember that events with this title are routine or a real appointment")
     s.add_argument("--title", required=True)
     s.add_argument("--as", dest="kind", choices=["routine", "appointment"], required=True)
@@ -126,6 +128,8 @@ def main(argv=None, run=subprocess.run):
     try:
         if a.cmd == "agenda":
             print(cmd_agenda(a, run))
+        elif a.cmd == "week":
+            print(cmd_week(a, run))
         elif a.cmd == "learn":
             print(learn(a.title, a.kind))
         else:
@@ -248,6 +252,123 @@ def cmd_agenda(a, run=subprocess.run):
     day = dt.datetime.now(ZoneInfo(TZ)).date() + dt.timedelta(days=a.offset)
     ag = agenda(day, load_rules(), run)
     return json.dumps(ag, indent=1) if a.json else render(ag)
+
+# ---- week view: the coming seven days at once ------------------------------------------------
+
+def default_week_start(today):
+    """Run on Sunday night -> the week starting tomorrow (Monday); on Monday -> today; otherwise the next Monday."""
+    if today.weekday() == 0:
+        return today
+    return today + dt.timedelta(days=(7 - today.weekday()))
+
+
+def _local_date(ev):
+    s = ev["start"]
+    if "date" in s:
+        return dt.date.fromisoformat(s["date"])
+    return dt.datetime.fromisoformat(s["dateTime"]).astimezone(ZoneInfo(TZ)).date()
+
+
+def _span(ev):
+    """(start datetime, end datetime) for timed events, else None."""
+    s, e = ev["start"].get("dateTime"), ev["end"].get("dateTime")
+    return (dt.datetime.fromisoformat(s), dt.datetime.fromisoformat(e)) if s and e else None
+
+
+def week(start, days, rules, run=subprocess.run):
+    """Events for `days` days from `start`, grouped by day. History is fetched once per calendar."""
+    cals = calendar_ids(rules["calendars"], run)
+    end_day = start + dt.timedelta(days=days)
+    t0, t1 = day_bounds(start)[0], day_bounds(end_day - dt.timedelta(days=1))[1]
+    h0 = day_bounds(start - dt.timedelta(days=30))[0]
+    by_day = {start + dt.timedelta(days=i): {"appointment": [], "routine": []} for i in range(days)}
+    multi = []
+    for cid, name in cals:
+        counts = {}
+        for e in list_events(cid, h0, t0, run):
+            k = norm(e.get("summary", ""))
+            counts[k] = counts.get(k, 0) + 1
+        for e in list_events(cid, t0, t1, run):
+            if e.get("status") == "cancelled":
+                continue
+            kind, why = classify(e, rules, counts)
+            title = e.get("summary", "(no title)")
+            if kind == "allday":
+                first = _local_date(e)
+                last = dt.date.fromisoformat(e["end"]["date"]) - dt.timedelta(days=1) if "date" in e.get("end", {}) else first
+                multi.append({"title": title, "from": max(first, start).isoformat(), "to": min(last, end_day - dt.timedelta(days=1)).isoformat(), "full_from": first.isoformat(), "full_to": last.isoformat(), "calendar": name})
+                continue
+            d = _local_date(e)
+            if d in by_day:
+                by_day[d][kind].append({"time": hhmm(e), "title": title, "where": e.get("location", ""), "calendar": name, "span": _span(e)})
+    out = {"start": start.isoformat(), "days": [], "all_day": multi, "daily_routine": []}
+    routine_days = {}
+    for d, parts in by_day.items():
+        for r in parts["routine"]:
+            routine_days.setdefault(norm(r["title"]), set()).add(d)
+    daily = {t for t, ds in routine_days.items() if len(ds) >= max(4, days - 3)}
+    for d in sorted(by_day):
+        appts = sorted(by_day[d]["appointment"], key=lambda x: x["time"])
+        overlaps, dupes = [], []
+        for i, a in enumerate(appts):
+            for b in appts[i + 1:]:
+                if a["span"] and b["span"] and a["span"][0] < b["span"][1] and b["span"][0] < a["span"][1]:
+                    if a["span"] == b["span"]:
+                        dupes.append(f"{a['title']} / {b['title']}")  # same time slot: usually one event entered twice
+                    else:
+                        overlaps.append(f"{a['title']} overlaps {b['title']}")
+        routine = [r for r in sorted(by_day[d]["routine"], key=lambda x: x["time"]) if norm(r["title"]) not in daily]
+        out["days"].append({"date": d.isoformat(), "appointments": [{k: v for k, v in x.items() if k != "span"} for x in appts],
+                            "routine": [{k: v for k, v in x.items() if k != "span"} for x in routine], "overlaps": overlaps, "possible_duplicates": dupes})
+    seen = {}
+    for d in sorted(by_day):
+        for r in by_day[d]["routine"]:
+            if norm(r["title"]) in daily and norm(r["title"]) not in seen:
+                seen[norm(r["title"])] = f"{r['title']} {r['time'].split('-')[0]}".strip()
+    out["daily_routine"] = list(seen.values())
+    return out
+
+
+def _all_day_label(x):
+    first, last = dt.date.fromisoformat(x["full_from"]), dt.date.fromisoformat(x["full_to"])
+    return f"{x['title']} (until {last:%d %b})" if last != first else f"{x['title']} ({first:%a %d %b})"
+
+
+def render_week(w):
+    first = dt.date.fromisoformat(w["start"])
+    last = dt.date.fromisoformat(w["days"][-1]["date"])
+    lines = [f"WEEK {first:%a %d %b} to {last:%a %d %b %Y}"]
+    busiest = max(w["days"], key=lambda d: len(d["appointments"]))
+    if busiest["appointments"]:
+        lines.append(f"Busiest day: {dt.date.fromisoformat(busiest['date']):%A} ({len(busiest['appointments'])} appointments)")
+    clashes = [f"{dt.date.fromisoformat(d['date']):%a %d %b}: {o}" for d in w["days"] for o in d["overlaps"]]
+    if clashes:
+        lines.append("CLASHES: " + "; ".join(clashes))
+    dupes = [f"{dt.date.fromisoformat(d['date']):%a %d %b}: {x}" for d in w["days"] for x in d["possible_duplicates"]]
+    if dupes:
+        lines.append("POSSIBLE DUPLICATE ENTRIES (same time slot): " + "; ".join(dupes))
+    if w["all_day"]:
+        lines.append("ALL-DAY / MULTI-DAY: " + "; ".join(_all_day_label(x) for x in w["all_day"]))
+    if w["daily_routine"]:
+        lines.append("REGULAR (most days): " + "; ".join(w["daily_routine"]))
+    for d in w["days"]:
+        day = dt.date.fromisoformat(d["date"])
+        lines.append(f"\n{day:%A %d %b}")
+        if not d["appointments"]:
+            lines.append("  clear (no appointments)")
+        for x in d["appointments"]:
+            lines.append(f"  {x['time'] or 'all day'}  {x['title']}" + (f" @ {x['where']}" if x["where"] else "") + (f"  [{x['calendar']}]" if x["calendar"] != "primary" else ""))
+        if d["routine"]:
+            lines.append("  routine: " + "; ".join(f"{x['title']} {x['time'].split('-')[0]}".strip() for x in d["routine"]))
+    return "\n".join(lines)
+
+
+def cmd_week(a, run=subprocess.run):
+    today = dt.datetime.now(ZoneInfo(TZ)).date()
+    start = dt.date.fromisoformat(a.start) if a.start else default_week_start(today)
+    w = week(start, a.days, load_rules(), run)
+    return json.dumps(w, indent=1) if a.json else render_week(w)
+
 
 if __name__ == "__main__":
     sys.exit(main())
