@@ -21,6 +21,7 @@ import {
 import { log } from '../log.js';
 import { SqliteStateAdapter } from '../state-sqlite.js';
 import { registerWebhookAdapter } from '../webhook-server.js';
+import { extractLinkButtons } from './link-buttons.js';
 import { getAskQuestionRender } from '../db/sessions.js';
 import { normalizeOptions, type NormalizedOption } from './ask-question.js';
 import type { ChannelAdapter, ChannelSetup, InboundMessage } from './adapter.js';
@@ -552,6 +553,22 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
       // Normal message
       const rawText = (content.markdown as string) || (content.text as string);
       const text = rawText ? transformText(rawText) : rawText;
+      // LOCAL: on Discord, links in a reply become tappable buttons (see link-buttons.ts).
+      const linkCard = text && adapter.name === 'discord' && !message.files?.length ? extractLinkButtons(text) : null;
+      if (text && linkCard) {
+        try {
+          const card = Card({
+            children: [
+              CardText(linkCard.text),
+              Actions(linkCard.buttons.map((b) => LinkButton({ label: b.label, url: b.url }))),
+            ],
+          });
+          const result = await adapter.postMessage(tid, { card, fallbackText: text });
+          return result?.id;
+        } catch (err) {
+          log.warn('Link-button card failed; sending the plain text instead', { err });
+        }
+      }
       if (text) {
         // Attach files if present (FileUpload format: { data, filename })
         const fileUploads = message.files?.map((f: { data: Buffer; filename: string }) => ({
