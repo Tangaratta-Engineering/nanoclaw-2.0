@@ -213,6 +213,8 @@ function createAdapter(): ChannelAdapter {
           id: `cli-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           kind: 'chat',
           timestamp: new Date().toISOString(),
+          // LOCAL: an admin/voice injection is addressed to the agent, so it must engage mention-only wirings too.
+          isMention: true,
           content: JSON.stringify({
             text: payload.text,
             sender: typeof payload.sender === 'string' ? payload.sender : 'cli',
