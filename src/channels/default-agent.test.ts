@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { InboundEvent } from './adapter.js';
-import { addressedToOtherAgent, qualifiesForDefaultAgent } from './default-agent.js';
+import { addressedToOtherAgent, otherAgentHasFloor, qualifiesForDefaultAgent } from './default-agent.js';
 
 function event(over: {
   text?: string;
@@ -101,5 +101,25 @@ describe('addressedToOtherAgent', () => {
     expect(addressedToOtherAgent(event({ text: '<@200> hi', isGroup: false }), ids)).toBe(false);
     expect(addressedToOtherAgent(event({ text: '<@200> hi', isMention: true }), ids)).toBe(false);
     expect(addressedToOtherAgent(event({ text: '<@200> hi', channelType: 'telegram' }), ids)).toBe(false);
+  });
+});
+
+describe('otherAgentHasFloor', () => {
+  const now = Date.parse('2026-10-29T10:30:00Z');
+  const timmy = ['T1'];
+  const post = (id: string, bot: boolean, min: number) => ({
+    author: { id, bot },
+    timestamp: new Date(now - min * 60_000).toISOString(),
+  });
+  it('is true when the other bot spoke last (humans in between do not matter)', () => {
+    expect(otherAgentHasFloor([post('G', false, 1), post('T1', true, 3), post('X', true, 20)], timmy, now)).toBe(true);
+  });
+  it('is false when the default bot spoke last', () => {
+    expect(otherAgentHasFloor([post('T0', true, 1), post('T1', true, 3)], timmy, now)).toBe(false);
+  });
+  it('is false once the window has passed or there is no bot post', () => {
+    expect(otherAgentHasFloor([post('T1', true, 45)], timmy, now)).toBe(false);
+    expect(otherAgentHasFloor([post('G', false, 1)], timmy, now)).toBe(false);
+    expect(otherAgentHasFloor([], timmy, now)).toBe(false);
   });
 });

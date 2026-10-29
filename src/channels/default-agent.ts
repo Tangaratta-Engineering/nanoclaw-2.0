@@ -100,9 +100,55 @@ export function addressedToOtherAgent(event: InboundEvent, ids: AgentIds): boole
   return Object.entries(ids).some(([name, list]) => name !== instance && list.some((id) => tagged.has(id)));
 }
 
+/** How long after the other agent last spoke an untagged message still counts as a reply to it. */
+const FLOOR_WINDOW_MS = 30 * 60 * 1000;
+
+/**
+ * Pure decision: given the channel's recent messages (newest first, Discord REST shape, excluding the
+ * one being routed), did the other agent speak last — i.e. is George answering it? Human messages
+ * between its post and now do not take the floor back; only a post by another bot does.
+ */
+export function otherAgentHasFloor(
+  recent: Array<{ author?: { id?: string; bot?: boolean }; timestamp?: string }>,
+  otherBotIds: string[],
+  now: number,
+): boolean {
+  const lastBot = recent.find((m) => m.author?.bot === true);
+  if (!lastBot?.author?.id || !otherBotIds.includes(lastBot.author.id)) return false;
+  const at = Date.parse(lastBot.timestamp ?? '');
+  return Number.isFinite(at) && now - at <= FLOOR_WINDOW_MS;
+}
+
+/** Newest-first recent messages of a Discord channel; [] on any failure (falls back to the default agent). */
+async function recentChannelMessages(platformId: string, beforeId?: string): Promise<any[]> {
+  const channelId = platformId.split(':')[2];
+  const token = readEnvFile(['DISCORD_BOT_TOKEN']).DISCORD_BOT_TOKEN;
+  if (!channelId || !token) return [];
+  try {
+    const q = `limit=15${beforeId ? `&before=${beforeId}` : ''}`;
+    const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages?${q}`, {
+      headers: { Authorization: `Bot ${token}` },
+    });
+    return res.ok ? ((await res.json()) as any[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 registerMessageInterceptor(async (event) => {
   if (addressedToOtherAgent(event, agentIds())) return true; // not for this agent: consume it
   if (!qualifiesForDefaultAgent(event)) return false;
+  // Conversation continuity: an untagged message that follows the other agent's post is a reply to it.
+  // (Threads are off, so this is what keeps a back-and-forth with Timmy going without re-tagging him.)
+  const otherName = 'timmy';
+  const other = getMessagingGroupWithAgentCount(event.channelType, event.platformId, otherName);
+  if (other && other.agentCount > 0) {
+    const recent = await recentChannelMessages(event.platformId, event.message.id);
+    if (otherAgentHasFloor(recent, agentIds()[otherName] ?? [], Date.now())) {
+      await routeInbound({ ...event, instance: otherName, message: { ...event.message, isMention: true } });
+      return true;
+    }
+  }
   // Only chats that actually have an agent wired (no auto-creation for stray channels).
   const found = getMessagingGroupWithAgentCount(event.channelType, event.platformId, DEFAULT_INSTANCE);
   if (!found || found.agentCount === 0) return false;
