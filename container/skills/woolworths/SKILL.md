@@ -16,6 +16,8 @@ $W search "parmesan block"         # all Woolworths products
 $W add 88436 6023717=2             # ADD to the NanoClaw list: STOCKCODE (1) or STOCKCODE=QTY
 $W set 6023717=4                   # make the list hold exactly 4 of that product
 $W show                            # what is on the NanoClaw list
+$W remove 88436 6023717            # take products off the NanoClaw list
+$W clear --yes                     # empty the NanoClaw list (only when George asks)
 $W lists                           # all his Woolworths lists
 $W add --list "Party" 12345        # another list (it must already exist)
 ```
@@ -35,5 +37,5 @@ Items print as `stockcode | name | size | price | cup price | notes`. The stockc
 - The bridge works through George's own signed-in browser on the server. If a command says NOT signed in or the bridge doesn't answer, tell George plainly (he signs in again with the ssh tunnel); don't retry in a loop.
 - Be gentle with the site: batch several items into one `add`, and don't run dozens of searches in a row.
 - `show` can lag a few seconds behind `add` (Woolworths updates its list view slowly), so don't treat a just-added item as missing; adding the same product again keeps one row and raises its quantity.
-- There is no remove or clear command. If he wants an item removed, tell him to delete it in the app.
+- `remove` and `clear` work on the NanoClaw list only. For any other list of his, tell him to edit it in the app. Run `clear --yes` only when George asks to clear, empty or start the list again; if it is unclear whether he means the whole list, ask first. After removing, say what went.
 - Prices and availability are live from the site and can change before he checks out.

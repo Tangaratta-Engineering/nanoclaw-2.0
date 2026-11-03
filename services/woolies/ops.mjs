@@ -2,13 +2,18 @@
 // is serialised and executed inside the signed-in Woolworths tab, so it must not use anything from this module.
 
 const LIST_RE = /^[\w .&'()-]{1,60}$/;
-const NEEDS_LIST = new Set(['show', 'add', 'set']);
+const NEEDS_LIST = new Set(['show', 'add', 'set', 'remove', 'clear']);
 
 export function validate(req) {
   if (!req || typeof req !== 'object' || typeof req.op !== 'string' || !Object.hasOwn(ops, req.op)) return 'unknown op';
   if (['search', 'history'].includes(req.op) && (typeof req.query !== 'string' || req.query.length < 1 || req.query.length > 100)) return 'query must be 1-100 characters';
   if (req.limit !== undefined && !(Number.isInteger(req.limit) && req.limit >= 1 && req.limit <= 20)) return 'limit must be 1-20';
   if (NEEDS_LIST.has(req.op) && (typeof req.list !== 'string' || !LIST_RE.test(req.list))) return 'list name must be 1-60 plain characters';
+  if (req.op === 'remove') {
+    if (!Array.isArray(req.items) || req.items.length < 1 || req.items.length > 25) return 'items must be 1-25 entries';
+    for (const it of req.items) if (!it || !Number.isInteger(it.stockcode) || it.stockcode < 1 || it.stockcode > 99999999) return 'each item needs a numeric stockcode';
+  }
+  if (req.op === 'clear' && req.confirm !== true) return 'clear needs confirm: true';
   if (req.op === 'add' || req.op === 'set') {
     if (!Array.isArray(req.items) || req.items.length < 1 || req.items.length > 25) return 'items must be 1-25 entries';
     for (const it of req.items) {
@@ -64,6 +69,19 @@ const showFn = page(`
   return { total: j.TotalRecordCount, items: (j.Items || []).map((p) => ({ ...prod(p), qty: p.DisplayQuantity ?? 1 })) };
 `);
 
+// The list's own record: one row per product with the row id that deletes need, and the quantity.
+const detailFn = page(`
+  const r = await fetch('/api/v3/ui/savedlists/' + arg.id);
+  if (r.status !== 200) return { error: 'could not read the list (HTTP ' + r.status + ')' };
+  const j = await r.json();
+  return { rows: (j.data.q.products || []).map((p) => ({ rowId: p.id, stockcode: Number(p.articleNumber), qty: p.quantity })) };
+`);
+
+const deleteFn = page(`
+  const r = await post('/api/v3/ui/savedlists', { opType: 'UPDATE', id: arg.id, products: arg.rowIds.map((id) => ({ opType: 'DELETE', id })) });
+  return { status: r.status };
+`);
+
 const createFn = page(`
   const r = await post('/api/v3/ui/savedlists', { opType: 'CREATE', name: arg.name, color: '#00AB4E' });
   return { status: r.status };
@@ -112,7 +130,9 @@ async function listQuantities(id, inPage) {
   for (const [k, v] of recent) {
     if (Date.now() - v.at > RECENT_MS) { recent.delete(k); continue; }
     const [lid, sc] = k.split(':').map(Number);
-    if (lid === id) m.set(sc, { qty: v.qty, name: m.get(sc)?.name ?? v.name ?? null });
+    if (lid !== id) continue;
+    if (v.qty === 0) m.delete(sc);
+    else m.set(sc, { qty: v.qty, name: m.get(sc)?.name ?? v.name ?? null });
   }
   return m;
 }
@@ -153,6 +173,24 @@ async function changeQuantities(req, inPage, additive) {
   return { list: l.name, results, added: results.filter((r) => r.quantity).map((r) => r.stockcode), failed };
 }
 
+/** Removing is only allowed on the agents' own list (NanoClaw), never on George's real lists. */
+const deletableLists = () => (process.env.WOOLIES_DELETE_LISTS || 'NanoClaw').split(',').map((x) => x.trim().toLowerCase());
+
+/** Remove products (or everything, when `stockcodes` is null) from a list. */
+async function removeFromList(req, inPage, stockcodes) {
+  if (!deletableLists().includes(req.list.toLowerCase())) throw new Error(`I only remove items from the NanoClaw list, not "${req.list}". George can edit that one in the app`);
+  const l = await findList(req, inPage, false);
+  const d = unwrap(await inPage(detailFn, { id: l.id }));
+  const rows = stockcodes ? d.rows.filter((r) => stockcodes.includes(r.stockcode)) : d.rows;
+  const missing = stockcodes ? stockcodes.filter((sc) => !d.rows.some((r) => r.stockcode === sc)) : [];
+  if (rows.length) {
+    const r = await inPage(deleteFn, { id: l.id, rowIds: rows.map((x) => x.rowId) });
+    if (r.status !== 200) throw new Error(`could not remove items (HTTP ${r.status})`);
+    for (const x of rows) recent.set(`${l.id}:${x.stockcode}`, { qty: 0, at: Date.now(), name: null });
+  }
+  return { list: l.name, removed: rows.map((x) => x.stockcode), notOnList: missing };
+}
+
 export const ops = {
   async status(_req, inPage) {
     const r = await inPage(listsFn, {});
@@ -167,4 +205,6 @@ export const ops = {
   },
   async add(req, inPage) { return changeQuantities(req, inPage, true); },
   async set(req, inPage) { return changeQuantities(req, inPage, false); },
+  async remove(req, inPage) { return removeFromList(req, inPage, req.items.map((i) => i.stockcode)); },
+  async clear(req, inPage) { return removeFromList(req, inPage, null); },
 };

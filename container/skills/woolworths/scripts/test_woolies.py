@@ -46,6 +46,18 @@ class T(unittest.TestCase):
         self.assertTrue(seen[0]["create"])
         self.assertIn("x3 111 Milk 2L", out); self.assertIn("NOT confirmed", out); self.assertIn("FAILED: 222 (HTTP 500)", out)
 
+    def test_remove_and_clear(self):
+        out, seen = self.run_cmd(["remove", "111", "222"], {"ok": True, "data": {"list": "NanoClaw", "removed": [111], "notOnList": [222]}})
+        self.assertEqual(seen[0], {"op": "remove", "list": "NanoClaw", "items": [{"stockcode": 111}, {"stockcode": 222}]})
+        self.assertIn("Removed from the Woolworths list 'NanoClaw': 111", out); self.assertIn("Wasn't on the list: 222", out)
+        out, seen = self.run_cmd(["clear", "--yes"], {"ok": True, "data": {"list": "NanoClaw", "removed": [1, 2, 3], "notOnList": []}})
+        self.assertEqual(seen[0], {"op": "clear", "list": "NanoClaw", "confirm": True})
+        self.assertIn("removed 3", out)
+
+    def test_clear_needs_yes(self):
+        with self.assertRaises(SystemExit):
+            w.run(["clear"], ask=self.ask)
+
     def test_set_sends_the_set_op(self):
         _, seen = self.run_cmd(["set", "111=2"], {"ok": True, "data": {"list": "NanoClaw", "added": [111], "failed": [], "results": [{"stockcode": 111, "name": "Milk", "quantity": 2}]}})
         self.assertEqual(seen[0]["op"], "set")
