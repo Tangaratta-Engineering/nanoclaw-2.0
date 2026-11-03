@@ -1,0 +1,15 @@
+[Unit]
+Description=Chrome kept signed in to Woolworths (for the NanoClaw Woolworths bridge)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=HOME=%h
+# Playwright's Chromium on a virtual display; the profile keeps George's Woolworths login.
+# Debug port 9222 listens on 127.0.0.1 only. If Chromium is updated, fix the chromium-NNNN folder below.
+ExecStart=/usr/bin/xvfb-run -a -s "-screen 0 1280x900x24" %h/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome --user-data-dir=%h/projects/.nanoclaw-data/woolies/profile --remote-debugging-port=9222 --no-first-run --no-sandbox --window-size=1280,900 https://www.woolworths.com.au/
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=NanoClaw Woolworths bridge (agents' list requests -> signed-in Chrome)
+After=woolies-chrome.service
+Wants=woolies-chrome.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/nanoclaw-2.0/services/woolies
+Environment=HOME=%h
+ExecStart=%h/.nvm/versions/node/v22.22.3/bin/node server.mjs
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
