@@ -37,11 +37,19 @@ class T(unittest.TestCase):
         self.assertEqual(seen[0], {"op": "history", "query": "milk", "limit": 6})
         self.assertIn("88436 | Dairy Farmers Full Cream | 2L | $4.20 | $2.10 / 1L | bought before", out)
 
-    def test_add_parses_quantities_and_reports_failures(self):
-        out, seen = self.run_cmd(["add", "111", "222=3"], {"ok": True, "data": {"list": "NanoClaw", "added": [111], "failed": [{"stockcode": 222, "status": 500}]}})
-        self.assertEqual(seen[0]["items"], [{"stockcode": 111, "qty": 1}, {"stockcode": 222, "qty": 3}])
+    def test_add_parses_quantities_and_reports_what_is_on_the_list(self):
+        reply = {"ok": True, "data": {"list": "NanoClaw", "added": [111], "failed": [{"stockcode": 222, "status": 500}], "results": [
+            {"stockcode": 111, "name": "Milk 2L", "quantity": 3}, {"stockcode": 222, "name": None, "quantity": None}]}}
+        out, seen = self.run_cmd(["add", "111=3", "222"], reply)
+        self.assertEqual(seen[0]["op"], "add")
+        self.assertEqual(seen[0]["items"], [{"stockcode": 111, "qty": 3}, {"stockcode": 222, "qty": 1}])
         self.assertTrue(seen[0]["create"])
-        self.assertIn("Added 1", out); self.assertIn("FAILED: 222 (HTTP 500)", out)
+        self.assertIn("x3 111 Milk 2L", out); self.assertIn("NOT confirmed", out); self.assertIn("FAILED: 222 (HTTP 500)", out)
+
+    def test_set_sends_the_set_op(self):
+        _, seen = self.run_cmd(["set", "111=2"], {"ok": True, "data": {"list": "NanoClaw", "added": [111], "failed": [], "results": [{"stockcode": 111, "name": "Milk", "quantity": 2}]}})
+        self.assertEqual(seen[0]["op"], "set")
+        self.assertEqual(seen[0]["items"], [{"stockcode": 111, "qty": 2}])
 
     def test_other_list_is_not_auto_created(self):
         _, seen = self.run_cmd(["add", "--list", "Party", "5"], {"ok": True, "data": {"list": "Party", "added": [5], "failed": []}})

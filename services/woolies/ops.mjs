@@ -2,18 +2,18 @@
 // is serialised and executed inside the signed-in Woolworths tab, so it must not use anything from this module.
 
 const LIST_RE = /^[\w .&'()-]{1,60}$/;
-const NEEDS_LIST = new Set(['show', 'add']);
+const NEEDS_LIST = new Set(['show', 'add', 'set']);
 
 export function validate(req) {
   if (!req || typeof req !== 'object' || typeof req.op !== 'string' || !Object.hasOwn(ops, req.op)) return 'unknown op';
   if (['search', 'history'].includes(req.op) && (typeof req.query !== 'string' || req.query.length < 1 || req.query.length > 100)) return 'query must be 1-100 characters';
   if (req.limit !== undefined && !(Number.isInteger(req.limit) && req.limit >= 1 && req.limit <= 20)) return 'limit must be 1-20';
   if (NEEDS_LIST.has(req.op) && (typeof req.list !== 'string' || !LIST_RE.test(req.list))) return 'list name must be 1-60 plain characters';
-  if (req.op === 'add') {
+  if (req.op === 'add' || req.op === 'set') {
     if (!Array.isArray(req.items) || req.items.length < 1 || req.items.length > 25) return 'items must be 1-25 entries';
     for (const it of req.items) {
       if (!it || !Number.isInteger(it.stockcode) || it.stockcode < 1 || it.stockcode > 99999999) return 'each item needs a numeric stockcode';
-      if (!Number.isInteger(it.qty ?? 1) || (it.qty ?? 1) < 1 || (it.qty ?? 1) > 20) return 'qty must be 1-20';
+      if (!Number.isInteger(it.qty ?? 1) || (it.qty ?? 1) < 1 || (it.qty ?? 1) > 99) return 'qty must be 1-99';
     }
   }
   return null;
@@ -61,7 +61,7 @@ const showFn = page(`
   const r = await post('/api/v3/ui/savedlists/products', { listId: arg.id, pagingParams: { sortType: 'Aisle', sortType2: '', pageNumber: 1, pageSize: 36, isSpecial: false } });
   if (r.status !== 200) return { error: 'could not read the list (HTTP ' + r.status + ')' };
   const j = await r.json();
-  return { total: j.TotalRecordCount, items: (j.Items || []).map((p) => ({ ...prod(p), qty: p.QuantityInTrolley })) };
+  return { total: j.TotalRecordCount, items: (j.Items || []).map((p) => ({ ...prod(p), qty: p.DisplayQuantity ?? 1 })) };
 `);
 
 const createFn = page(`
@@ -69,14 +69,15 @@ const createFn = page(`
   return { status: r.status };
 `);
 
-const addFn = page(`
-  const out = [];
-  for (const it of arg.items) {
-    const r = await post('/apis/ui/mylists/' + arg.id + '/Items', { Quantity: it.qty, Source: 'RR', StockCode: it.stockcode });
-    out.push({ stockcode: it.stockcode, status: r.status });
-    await new Promise((res) => setTimeout(res, 250 + Math.random() * 250));
-  }
-  return { results: out };
+const addOneFn = page(`
+  const r = await post('/apis/ui/mylists/' + arg.id + '/Items', { Quantity: 1, Source: 'RR', StockCode: arg.stockcode });
+  return { status: r.status };
+`);
+
+// The site's own quantity stepper on a list: sets the quantity of one list item (absolute, not "add").
+const setQtyFn = page(`
+  const r = await post('/apis/ui/mylists/Edit/Product', { stockcode: arg.stockcode, quantity: arg.qty, listId: arg.id });
+  return { status: r.status };
 `);
 
 async function findList(req, inPage, create) {
@@ -96,6 +97,62 @@ async function findList(req, inPage, create) {
 
 const unwrap = (r) => { if (r.error) throw new Error(r.error); return r; };
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Woolworths' list view can lag the edits just made by 20 seconds or more, so remember what we set ourselves
+// and prefer it over the (stale) read-back for 2 minutes. Keeps "add 2" then "add 1" a few seconds apart right.
+const recent = new Map(); // `${listId}:${stockcode}` -> { qty, at }
+const RECENT_MS = 120_000;
+export const resetRecent = () => recent.clear(); // tests
+
+/** Quantities on the list right now: Map(stockcode -> {qty, name}), with our own recent edits laid over the site's view. */
+async function listQuantities(id, inPage) {
+  const r = unwrap(await inPage(showFn, { id }));
+  const m = new Map(r.items.map((i) => [i.stockcode, { qty: i.qty, name: i.name }]));
+  for (const [k, v] of recent) {
+    if (Date.now() - v.at > RECENT_MS) { recent.delete(k); continue; }
+    const [lid, sc] = k.split(':').map(Number);
+    if (lid === id) m.set(sc, { qty: v.qty, name: m.get(sc)?.name ?? v.name ?? null });
+  }
+  return m;
+}
+
+/**
+ * add (additive=true): each qty is ADDED to what the list already holds for that product.
+ * set (additive=false): each qty becomes the exact quantity on the list.
+ * Works out the target quantity itself, applies it with the site's own list stepper and reports the quantity it set.
+ */
+async function changeQuantities(req, inPage, additive) {
+  const l = await findList(req, inPage, req.create === true);
+  const want = new Map();
+  for (const i of req.items) want.set(i.stockcode, (additive ? (want.get(i.stockcode) ?? 0) : 0) + (i.qty ?? 1));
+  const before = await listQuantities(l.id, inPage);
+  const failed = [];
+  const results = [];
+  for (const [stockcode, qty] of want) {
+    const have = before.get(stockcode)?.qty ?? 0;
+    const target = additive ? have + qty : qty;
+    let ok = true;
+    if (have === 0) {
+      const a = await inPage(addOneFn, { id: l.id, stockcode });
+      if (a.status !== 200) { failed.push({ stockcode, status: a.status }); ok = false; }
+      else await sleep(400);
+    }
+    if (ok && (target !== 1 || have > 0)) {
+      const e = await inPage(setQtyFn, { id: l.id, stockcode, qty: target });
+      if (e.status !== 200) { failed.push({ stockcode, status: e.status }); ok = false; }
+    }
+    if (ok) recent.set(`${l.id}:${stockcode}`, { qty: target, at: Date.now(), name: before.get(stockcode)?.name ?? null });
+    results.push({ stockcode, name: before.get(stockcode)?.name ?? null, quantity: ok ? target : null });
+    await sleep(250 + Math.random() * 250);
+  }
+  // names for newly added products (the list view lags, so this is best effort)
+  await sleep(1200);
+  const now = await listQuantities(l.id, inPage).catch(() => new Map());
+  for (const r of results) r.name = r.name ?? now.get(r.stockcode)?.name ?? null;
+  return { list: l.name, results, added: results.filter((r) => r.quantity).map((r) => r.stockcode), failed };
+}
+
 export const ops = {
   async status(_req, inPage) {
     const r = await inPage(listsFn, {});
@@ -108,10 +165,6 @@ export const ops = {
     const l = await findList(req, inPage, false);
     return { list: l.name, ...unwrap(await inPage(showFn, { id: l.id })) };
   },
-  async add(req, inPage) {
-    const l = await findList(req, inPage, req.create === true);
-    const items = req.items.map((i) => ({ stockcode: i.stockcode, qty: i.qty ?? 1 }));
-    const r = unwrap(await inPage(addFn, { id: l.id, items }));
-    return { list: l.name, added: r.results.filter((x) => x.status === 200).map((x) => x.stockcode), failed: r.results.filter((x) => x.status !== 200) };
-  },
+  async add(req, inPage) { return changeQuantities(req, inPage, true); },
+  async set(req, inPage) { return changeQuantities(req, inPage, false); },
 };

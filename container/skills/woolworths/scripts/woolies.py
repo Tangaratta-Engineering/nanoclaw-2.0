@@ -82,7 +82,9 @@ def run(argv, ask=ask):
     sub.add_parser("lists", help="George's Woolworths lists")
     s = sub.add_parser("show", help="what is on a list")
     s.add_argument("--list", default=DEFAULT_LIST)
-    s = sub.add_parser("add", help="add products (STOCKCODE or STOCKCODE=QTY) to a list; creates the list if missing")
+    s = sub.add_parser("add", help="ADD products (STOCKCODE or STOCKCODE=QTY) to a list: the quantity is added to what is already there; creates the list if missing")
+    s.add_argument("--list", default=DEFAULT_LIST); s.add_argument("items", nargs="+")
+    s = sub.add_parser("set", help="make the list hold exactly this quantity of each product (STOCKCODE=QTY)")
     s.add_argument("--list", default=DEFAULT_LIST); s.add_argument("items", nargs="+")
     a = ap.parse_args(argv)
     try:
@@ -106,10 +108,14 @@ def run(argv, ask=ask):
                 if a.list == DEFAULT_LIST and "no list called" in str(e):
                     return f"The '{a.list}' list doesn't exist yet; it is created the first time something is added."
                 raise
-            return f"{d['list']}: {d['total']} items\n" + "\n".join(fmt_item(p) for p in d["items"])
-        if a.cmd == "add":
-            d = ask({"op": "add", "list": a.list, "create": a.list == DEFAULT_LIST, "items": [parse_item(i) for i in a.items]})
-            out = f"Added {len(d['added'])} to the Woolworths list '{d['list']}': " + ", ".join(map(str, d["added"]))
+            return f"{d['list']}: {d['total']} items\n" + "\n".join(f"x{p.get('qty', 1)} | " + fmt_item(p) for p in d["items"])
+        if a.cmd in ("add", "set"):
+            d = ask({"op": a.cmd, "list": a.list, "create": a.list == DEFAULT_LIST, "items": [parse_item(i) for i in a.items]})
+            lines = []
+            for r in d.get("results", []):
+                label = f"{r['stockcode']} {r.get('name') or ''}".strip()
+                lines.append(f"On the Woolworths list '{d['list']}': x{r['quantity']} {label}" if r.get("quantity") else f"NOT confirmed on the list yet: {label}")
+            out = "\n".join(lines) or f"Done on '{d['list']}'"
             if d["failed"]:
                 out += "\nFAILED: " + ", ".join(f"{x['stockcode']} (HTTP {x['status']})" for x in d["failed"])
             return out
