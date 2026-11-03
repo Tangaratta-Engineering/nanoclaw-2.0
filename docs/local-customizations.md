@@ -66,6 +66,7 @@ branch already ports these to the new DB API — prefer its resolutions.
 - `~/projects/.nanoclaw-tools/piper/` — Piper packages (`site/`) and voices (`voices/`, about 60 MB each) for the `speak` skill; rebuild with `container/skills/speak/setup.sh`.
 - OneCLI vault secret `Groq` (the transcription API key). To restore: create a generic secret, host `api.groq.com`, header `Authorization`, format `Bearer {value}`; verify with `onecli run --agent <id> -- curl -s https://api.groq.com/openai/v1/models`.
 - OneCLI vault secret `Notion` (internal integration token). Restore: generic secret, host `api.notion.com`, header `Authorization`, format `Bearer {value}`; verify with `onecli run --agent <id> -- curl -s -H 'Notion-Version: 2026-03-11' https://api.notion.com/v1/users/me`.
+- The **Jack** agent group (Opus 5.5, high effort, only the `agent-browser` skill; web search and fetch are built in): a thinking partner for philosophical questions and personal struggles, reached through Tiff and Timmy (destinations `jack` both ways; no Discord channel). Its persona is `groups/jack/CLAUDE.local.md` (gitignored; has the crisis/safety rules) and its notes live in `groups/jack/notes.md`; the group, its container config row and destinations are in `data/v2.db`. Back up `groups/jack/`.
 - OneCLI vault (agents, secrets) and `~/.config/nanoclaw/mount-allowlist.json`.
 
 Agent identifiers must satisfy OneCLI: 1–50 chars, start with a **letter**, lowercase letters, digits and
