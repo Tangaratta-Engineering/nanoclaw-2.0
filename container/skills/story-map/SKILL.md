@@ -1,6 +1,6 @@
 ---
 name: story-map
-description: Manage George's Life Story Map, his visual card wall of every project and task at home and with the family. Use when George asks to add, change, tick off, move or remove anything on "the board", "the wall", "the story map" or "the roadmap", gives you a project or task to track, or asks what's on it or what's still open.
+description: Manage George's Life Story Map, his visual card wall of every project and task at home and with the family. Use when George asks to add, change, tick off, complete, move or remove anything on "the board", "the wall", "the story map" or "the roadmap", gives you a project or task to track, or asks what's on it or what's still open.
 allowed-tools: Bash(/app/skills/story-map/scripts/storymap:*)
 ---
 
@@ -26,6 +26,7 @@ Other conventions already on the wall:
 - **(H)** and **(S)** at the end of a card mean it's for Henry or Sophie. A "Henry:" prefix means the same.
 - A **sub-heading** is a green column inside a category (for example "Outside" under George's Projects). Its cards can be blue outcome cards. Use one only when George asks for a sub-group.
 - A ticked **result** means achieved. A ticked **unknown** means answered. Ticked cards stay on the board, shown crossed out.
+- A **completed outcome** (blue) moves, with all its cards, to the **Completed** row at the bottom of the board, newest first and labelled with the category it came from. It still belongs to that category in the data, so reopening it puts it straight back where it was. Green sub-headings can't be completed.
 - Card text can span lines (use `\n`). Keep it short; these are index cards (280-character limit).
 
 ### Coaching George on wording
@@ -35,6 +36,8 @@ When George asks for a yellow card worded as a task ("buy fireworks tickets"), s
 ## Setup (done once by the host)
 
 `storymap` is at `/app/skills/story-map/scripts/storymap`. There is no token in the container: the OneCLI gateway injects George's GitHub credential for `api.github.com` (a fine-grained token limited to the **firsthalfhero/roadmapping** repo, Contents: read and write). Check reading works with `storymap show`. If a command fails with HTTP 401, 403 or 404, the credential is missing or expired: tell George, don't ask him for a token in chat.
+
+The tool and these instructions ship with NanoClaw and are updated by George on the server. If a command described here is missing, tell George the story-map skill needs updating. `self-update` is not used in this install, and the skill folder is read-only.
 
 Optional environment variables: `STORYMAP_REPO` (default `firsthalfhero/roadmapping`), `STORYMAP_BRANCH` (default `main`).
 
@@ -62,8 +65,10 @@ Run every command as `/app/skills/story-map/scripts/storymap <command> ...` (wri
 | `add-card OUTCOME_ID unknown "Text"` | New pink card |
 | `edit ID "New text" [--type result\|unknown]` | Reword any card, outcome or category |
 | `retype ID result\|unknown` | Switch a card between yellow and pink |
-| `done ID [ID ...]` | Tick off one or more cards |
-| `undo ID [ID ...]` | Reopen ticked cards |
+| `done ID [ID ...]` | Tick off cards, or complete blue outcomes (they move to the Completed row) |
+| `undo ID [ID ...]` | Reopen ticked cards, or move completed outcomes back into their category |
+| `complete OUTCOME_ID [...]` | Complete blue outcomes (same as `done`, but refuses anything that isn't an outcome) |
+| `reopen OUTCOME_ID [...]` | Move completed outcomes back into their category |
 | `move CARD_ID --to OUTCOME_ID [--index N]` | Move a card to another column |
 | `move OUTCOME_ID --to CATEGORY_ID [--index N]` | Move a whole column to another category |
 | `move ID --index N` | Reorder within its current place (works for categories too) |
@@ -86,7 +91,11 @@ Global options go **before** the command: `--dry-run` (show what would change, s
 
 - `remove` anything with `--force` (deletes a whole column or category)
 - `import` (replaces the whole board)
-- delete a card he might want ticked instead. Default to `done`, because finished cards are a record of progress. Remove only when he says it's no longer relevant, was added by mistake, or is a duplicate.
+- delete a card or outcome he might want ticked or completed instead. Default to `done`, because finished work is a record of progress. Remove only when he says it's no longer relevant, was added by mistake, or is a duplicate.
+
+### Completing an outcome
+
+When George says an event or outcome is finished ("Mum's birthday is done", "the gates are finished"), complete the **blue outcome** with `complete <outcome-id>`. If the tool reports cards under it that are still open, tell him which ones and ask whether to tick them as well or leave them. Don't complete an outcome just because all of its cards are ticked; wait for George to say it's finished. `show --open-only` hides the Completed row.
 - restructure: create several cards at once, merge columns, or rename a category
 
 ### Examples
@@ -101,7 +110,8 @@ Global options go **before** the command: `--dry-run` (show what would change, s
 | "Move the roof rack question to the summer holiday" | `find "roof rack"` and `find "Summer"` → `move <card-id> --to <summer-id>` |
 | "New category for the school P&C" | `add-category "School P&C"`, then ask what outcomes go under it |
 | "What's left for Halloween?" | `find Halloween` → `show --open-only`, and summarise that column only |
-| "Halloween's done, clear it off" | Ask whether to tick the remaining cards or remove the column, then act |
+| "Halloween's done" | `find Halloween` → `complete <outcome-id>`. If the tool notes open cards under it, ask George whether to tick those too |
+| "Mum's birthday wasn't finished, put it back" | `find Mum` → `reopen <outcome-id>` |
 
 ## When George edits on the page
 
@@ -138,6 +148,7 @@ George can drag cards around and edit them on the web page, but **the page can't
   "groups": [
     { "id": "g1", "title": "Weekends / Holidays / Trips",
       "outcomes": [
+        { "id": "o35", "title": "Mum's birthday", "done": true, "doneAt": "2026-11-03T01:30:00+00:00", "items": [] },
         { "id": "o2", "title": "Blue Mountains trip",
           "items": [
             { "id": "i3", "type": "pink",   "text": "Nala feed + care", "done": false },
@@ -151,5 +162,6 @@ George can drag cards around and edit them on the web page, but **the page can't
 ```
 
 - `groups` = green categories, left to right. `outcomes` = columns, left to right. `items` = cards, top to bottom.
+- A completed outcome has `"done": true` and `"doneAt"` (UTC timestamp). The page shows it in the Completed row; it stays in its category's `outcomes` list.
 - `type`: `yellow` result, `pink` unknown, `blue` outcome card (only inside a `"kind": "green"` sub-heading column).
 - Ids are unique strings. Never reuse one.
