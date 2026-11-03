@@ -151,5 +151,70 @@ class Week(unittest.TestCase):
         self.assertIn("Term 4 (until 10 Dec)", out)
 
 
+class ChangeTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+        c.PENDING = os.path.join(self.tmp, "pending.json"); c.CHANGELOG = os.path.join(self.tmp, "log.jsonl")
+        self.calls = []
+
+    def run_(self, ev=None):
+        ev = ev or {"id": "e1", "summary": "Physio", "start": {"dateTime": "2026-11-05T08:30:00+11:00"}, "end": {"dateTime": "2026-11-05T09:30:00+11:00"}}
+        def run(cmd, input=None, **kw):
+            method = cmd[cmd.index("-X") + 1]
+            self.calls.append((method, json.loads(input) if input else None))
+            body = ev if method == "GET" else ({} if method == "DELETE" else dict(ev, **(json.loads(input) if input else {})))
+            return NS(returncode=0, stdout=json.dumps(body) + "\n200", stderr="")
+        return run
+
+    def a(self, cmd, **kw):
+        d = dict(cmd=cmd, event_id="e1", calendar="primary", confirm=None, title=None, start=None, end=None, location=None, notes=None)
+        d.update(kw)
+        return NS(**d)
+
+    def test_preview_changes_nothing_then_confirm_applies(self):
+        run = self.run_()
+        out = c.cmd_change(self.a("edit", title="Physio (moved)"), run)
+        self.assertIn("PREVIEW ONLY", out)
+        self.assertEqual([m for m, _ in self.calls], ["GET"])
+        tok = out.rsplit("--confirm ", 1)[1].strip()
+        out = c.cmd_change(self.a("edit", title="Physio (moved)", confirm=tok), run)
+        self.assertIn("Changed", out)
+        self.assertEqual(self.calls[-1], ("PATCH", {"summary": "Physio (moved)"}))
+        self.assertIn("Physio", open(c.CHANGELOG).read())  # before-state logged
+
+    def test_token_single_use_and_bound_to_the_change(self):
+        run = self.run_()
+        tok = c.cmd_change(self.a("delete"), run).rsplit("--confirm ", 1)[1].strip()
+        with self.assertRaises(c.CalError):
+            c.cmd_change(self.a("delete", event_id="other", confirm=tok), run)
+        c.cmd_change(self.a("delete", confirm=tok), run)
+        self.assertEqual(self.calls[-1][0], "DELETE")
+        with self.assertRaises(c.CalError):
+            c.cmd_change(self.a("delete", confirm=tok), run)  # already used
+
+    def test_wrong_op_and_bad_code_rejected(self):
+        run = self.run_()
+        tok = c.cmd_change(self.a("delete"), run).rsplit("--confirm ", 1)[1].strip()
+        with self.assertRaises(c.CalError):
+            c.cmd_change(self.a("edit", title="x", confirm=tok), run)
+        with self.assertRaises(c.CalError):
+            c.cmd_change(self.a("delete", confirm="zzzzzz"), run)
+        self.assertNotIn("DELETE", [m for m, _ in self.calls])
+
+    def test_repeating_and_empty_edit_refused(self):
+        with self.assertRaises(c.CalError):
+            c.cmd_change(self.a("delete"), self.run_({"id": "e1", "summary": "Bins", "recurringEventId": "r"}))
+        with self.assertRaises(c.CalError):
+            c.cmd_change(self.a("edit"), self.run_())
+
+    def test_all_day_move(self):
+        run = self.run_()
+        out = c.cmd_change(self.a("edit", start="2026-11-06"), run)
+        tok = out.rsplit("--confirm ", 1)[1].strip()
+        c.cmd_change(self.a("edit", start="2026-11-06", confirm=tok), run)
+        self.assertEqual(self.calls[-1][1], {"start": {"date": "2026-11-06"}, "end": {"date": "2026-11-07"}})
+
+
 if __name__ == "__main__":
     unittest.main()
