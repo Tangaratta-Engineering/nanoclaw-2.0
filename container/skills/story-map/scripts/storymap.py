@@ -94,6 +94,10 @@ class Conflict(Exception):
 
 # ---------- model helpers ----------
 
+def now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+
 def new_id(prefix, data):
     used = {x["id"] for x in walk(data)}
     while True:
@@ -178,6 +182,10 @@ def validate(data):
                 problems.append(f"{w2}: empty title")
             if o.get("kind", "blue") not in ("blue", "green"):
                 problems.append(f"{w2}: kind must be 'blue' or 'green'")
+            if "done" in o and not isinstance(o["done"], bool):
+                problems.append(f"{w2}: done must be true/false")
+            if o.get("done") and o.get("kind") == "green":
+                problems.append(f"{w2}: sub-headings can't be completed")
             if not isinstance(o.get("items"), list):
                 problems.append(f"{w2}: 'items' must be a list"); continue
             for ci, c in enumerate(o["items"]):
@@ -194,24 +202,43 @@ def validate(data):
     return problems
 
 
+def is_completed(o):
+    return o.get("done") is True and o.get("kind") != "green"
+
+
+def _outcome_lines(o, show_done, label, suffix=""):
+    items = o["items"]
+    open_n = sum(1 for c in items if not c.get("done"))
+    out = [f"  [{label} {o['id']}] {o['title']}  ({open_n} open / {len(items)} cards){suffix}"]
+    for c in items:
+        if c.get("done") and not show_done:
+            continue
+        box = "[x]" if c.get("done") else "[ ]"
+        text = c["text"].replace("\n", " / ")
+        out.append(f"    {box} {TYPE_LABEL[c['type']]:<7} {c['id']}  {text}")
+    return out
+
+
 def render_text(data, show_done=True):
     out = []
     upd = data.get("updated")
     if upd:
         out.append(f"Last saved: {upd}")
+    completed = []
     for g in data["groups"]:
         out.append(f"\n[CATEGORY {g['id']}] {g['title']}")
         for o in g["outcomes"]:
-            kind = "SUB-HEADING" if o.get("kind") == "green" else "OUTCOME"
-            items = o["items"]
-            open_n = sum(1 for c in items if not c.get("done"))
-            out.append(f"  [{kind} {o['id']}] {o['title']}  ({open_n} open / {len(items)} cards)")
-            for c in items:
-                if c.get("done") and not show_done:
-                    continue
-                box = "[x]" if c.get("done") else "[ ]"
-                text = c["text"].replace("\n", " / ")
-                out.append(f"    {box} {TYPE_LABEL[c['type']]:<7} {c['id']}  {text}")
+            if is_completed(o):
+                completed.append((g, o)); continue
+            label = "SUB-HEADING" if o.get("kind") == "green" else "OUTCOME"
+            out += _outcome_lines(o, show_done, label)
+    if completed and show_done:
+        completed.sort(key=lambda go: go[1].get("doneAt", ""), reverse=True)
+        out.append("\n[COMPLETED ROW] (completed outcomes, newest first; they still belong to their category)")
+        for g, o in completed:
+            out += _outcome_lines(o, True, "COMPLETED", f"  from '{g['title']}', completed {o.get('doneAt', '?')[:10]}")
+    elif completed:
+        out.append(f"\n({len(completed)} completed outcome(s) hidden; run `show` without --open-only to see them)")
     return "\n".join(out)
 
 
@@ -234,7 +261,7 @@ def cmd_find(data, a):
                 print(f"{label:<8} {node['id']}  {path}"); hits += 1
         for o in g["outcomes"]:
             if q in o["title"].lower():
-                print(f"OUTCOME  {o['id']}  {g['title']} > {o['title']}"); hits += 1
+                print(f"OUTCOME  {o['id']}  {g['title']} > {o['title']}" + ("  (completed)" if is_completed(o) else "")); hits += 1
             for c in o["items"]:
                 if q in c["text"].lower():
                     print(f"CARD     {c['id']}  {g['title']} > {o['title']} > {c['text'].splitlines()[0]}"
@@ -308,8 +335,25 @@ def _set_done(data, a, value):
     msgs = []
     for id_ in a.ids:
         lvl, n, _, _ = locate(data, id_)
+        if lvl == "outcome":
+            if n.get("kind") == "green":
+                raise Fail(f"'{id_}' is a sub-heading; only blue outcomes can be completed.")
+            label = n["title"]
+            if value:
+                if not n.get("done"):
+                    n["done"] = True
+                    n["doneAt"] = now_iso()
+                left = [c["text"].splitlines()[0] for c in n["items"] if not c.get("done")]
+                print(f"Completed outcome: {label} (moves to the Completed row)")
+                if left:
+                    print(f"  Note: {len(left)} card(s) under it are still open: " + "; ".join(left))
+            else:
+                n.pop("done", None); n.pop("doneAt", None)
+                print(f"Reopened outcome: {label} (back in its category)")
+            msgs.append(label)
+            continue
         if lvl != "card":
-            raise Fail(f"'{id_}' is a {lvl}; only cards can be ticked off.")
+            raise Fail(f"'{id_}' is a {lvl}; only cards and outcomes can be ticked off.")
         n["done"] = value
         msgs.append(n["text"].splitlines()[0])
         print(("Done: " if value else "Reopened: ") + n["text"].splitlines()[0])
@@ -321,6 +365,23 @@ def cmd_done(data, a):
 
 
 def cmd_undo(data, a):
+    return _set_done(data, a, False)
+
+
+def _outcomes_only(data, a):
+    for id_ in a.ids:
+        lvl, n, _, _ = locate(data, id_)
+        if lvl != "outcome":
+            raise Fail(f"'{id_}' is a {lvl}; complete/reopen only work on blue outcomes. Use done/undo for cards.")
+
+
+def cmd_complete(data, a):
+    _outcomes_only(data, a)
+    return _set_done(data, a, True)
+
+
+def cmd_reopen(data, a):
+    _outcomes_only(data, a)
     return _set_done(data, a, False)
 
 
@@ -370,6 +431,12 @@ def cmd_import(data, a):
     return "Import board from George's edits"
 
 
+def cmd_self_update(data, a):
+    """In this NanoClaw install the skill is part of the NanoClaw repo, so it is updated there."""
+    raise Fail("self-update isn't used in this install: the story-map skill ships with NanoClaw and is updated "
+               "by George on the server (a change merged into the NanoClaw repo). Tell George the tool needs updating.")
+
+
 # ---------- main ----------
 
 def build_parser():
@@ -413,11 +480,17 @@ def build_parser():
     s = sp.add_parser("retype", help="Switch a card between result and unknown.")
     s.add_argument("id"); s.add_argument("type"); s.set_defaults(fn=cmd_retype, write=True)
 
-    s = sp.add_parser("done", help="Tick off one or more cards (result achieved / unknown answered).")
+    s = sp.add_parser("done", help="Tick off cards (result achieved / unknown answered) or complete blue outcomes (moves them to the Completed row).")
     s.add_argument("ids", nargs="+"); s.set_defaults(fn=cmd_done, write=True)
 
-    s = sp.add_parser("undo", help="Reopen one or more ticked cards.")
+    s = sp.add_parser("undo", help="Reopen ticked cards, or move completed outcomes back into their category.")
     s.add_argument("ids", nargs="+"); s.set_defaults(fn=cmd_undo, write=True)
+
+    s = sp.add_parser("complete", help="Complete one or more blue outcomes (moves them to the Completed row).")
+    s.add_argument("ids", nargs="+"); s.set_defaults(fn=cmd_complete, write=True)
+
+    s = sp.add_parser("reopen", help="Move completed blue outcomes back into their category.")
+    s.add_argument("ids", nargs="+"); s.set_defaults(fn=cmd_reopen, write=True)
 
     s = sp.add_parser("move", help="Move a card to another outcome, an outcome to another category, or reorder.")
     s.add_argument("id"); s.add_argument("--to", help="Destination outcome (for a card) or category (for an outcome). Omit to reorder in place.")
@@ -428,6 +501,10 @@ def build_parser():
     s.add_argument("id"); s.add_argument("--force", action="store_true", help="Also delete everything under it.")
     s.set_defaults(fn=cmd_remove, write=True)
 
+    s = sp.add_parser("self-update", help="Download the latest storymap.py and SKILL.md from the repo into this folder.")
+    s.add_argument("--to", help="Folder to download into instead of this script's folder (use when the skill folder is read-only).")
+    s.set_defaults(fn=cmd_self_update, write=False, no_load=True)
+
     s = sp.add_parser("import", help="Replace the board with JSON George copied from the page ('Copy / load map').")
     s.add_argument("path"); s.set_defaults(fn=cmd_import, write=True)
     return p
@@ -436,6 +513,9 @@ def build_parser():
 def main(argv=None):
     a = build_parser().parse_args(argv)
     try:
+        if getattr(a, "no_load", False):
+            a.fn(None, a)
+            return 0
         store = Store(a.file)
         for attempt in range(3):
             data = store.load()
@@ -449,7 +529,7 @@ def main(argv=None):
                 print("(dry run: nothing saved)")
                 return 0
             data["version"] = 1
-            data["updated"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+            data["updated"] = now_iso()
             # keep key order tidy: version, updated, groups
             data = {"version": 1, "updated": data["updated"], "groups": data["groups"]}
             try:

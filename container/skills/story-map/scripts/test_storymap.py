@@ -42,6 +42,22 @@ class LocalTests(unittest.TestCase):
         self.assertFalse(data["groups"][0]["outcomes"][0]["items"][0]["done"])
 
 
+class CompleteTests(unittest.TestCase):
+    def test_complete_and_reopen_outcome(self):
+        rc, data = run(["complete", "o2"])
+        o = data["groups"][0]["outcomes"][0]
+        self.assertEqual(rc, 0)
+        self.assertTrue(o["done"] and o["doneAt"])
+        rc, data2 = run(["reopen", "o2"], data)
+        self.assertNotIn("done", data2["groups"][0]["outcomes"][0])
+
+    def test_complete_refuses_cards_and_subheadings(self):
+        self.assertEqual(run(["complete", "c3"])[0], 1)
+
+    def test_self_update_is_disabled_here(self):
+        self.assertEqual(run(["self-update"])[0], 1)
+
+
 class RemoteTests(unittest.TestCase):
     def fake(self, calls, put_code=200):
         import base64
