@@ -27,7 +27,7 @@ function fakePage(calls, { items = {}, addStatus = 200, editStatus = 200 } = {})
   let created = false;
   return async (fn, arg) => {
     const src = fn.toString();
-    if (src.includes('opType')) { created = true; calls.push(['create', arg]); return { status: 200 }; }
+    if (src.includes("opType: 'CREATE'")) { created = true; calls.push(['create', arg]); return { status: 200 }; }
     if (src.includes('/Items')) {
       calls.push(['addOne', arg]);
       if (addStatus === 200) list.set(arg.stockcode, 1);
@@ -37,6 +37,13 @@ function fakePage(calls, { items = {}, addStatus = 200, editStatus = 200 } = {})
       calls.push(['setQty', arg]);
       if (editStatus === 200) list.set(arg.stockcode, arg.qty);
       return { status: editStatus };
+    }
+    if (src.includes("'/api/v3/ui/savedlists/' + arg.id")) return { rows: [...list].map(([sc, qty], i) => ({ rowId: 1000 + i, stockcode: sc, qty })) };
+    if (src.includes("opType: 'UPDATE'")) {
+      calls.push(['delete', arg]);
+      const rows = [...list.keys()];
+      for (const id of arg.rowIds) list.delete(rows[id - 1000]);
+      return { status: 200 };
     }
     if (src.includes("fetch('/api/v3/ui/savedlists')")) return created ? { lists: [...LISTS.lists, { id: 9, name: 'Fresh', count: 0 }] } : LISTS;
     if (src.includes('savedlists/products')) return { total: list.size, items: [...list].map(([stockcode, qty]) => ({ stockcode, name: 'P' + stockcode, qty })) };
@@ -87,4 +94,32 @@ test('two quick adds stack even if the site list view has not caught up', async 
   await ops.add({ op: 'add', list: 'NanoClaw', items: [{ stockcode: 77, qty: 2 }] }, staleShow);
   const r = await ops.add({ op: 'add', list: 'NanoClaw', items: [{ stockcode: 77, qty: 1 }] }, staleShow);
   assert.equal(r.results[0].quantity, 3);
+});
+
+test('remove deletes only the named products and reports ones not on the list', async () => {
+  const calls = [];
+  const r = await ops.remove({ op: 'remove', list: 'NanoClaw', items: [{ stockcode: 2 }, { stockcode: 99 }] }, fakePage(calls, { items: { 1: 1, 2: 4, 3: 1 } }));
+  assert.deepEqual(r.removed, [2]);
+  assert.deepEqual(r.notOnList, [99]);
+  assert.deepEqual(calls.find((c) => c[0] === 'delete')[1].rowIds, [1001]);
+});
+
+test('clear removes everything, and needs confirm', async () => {
+  assert.ok(validate({ op: 'clear', list: 'NanoClaw' }));
+  assert.equal(validate({ op: 'clear', list: 'NanoClaw', confirm: true }), null);
+  const calls = [];
+  const r = await ops.clear({ op: 'clear', list: 'NanoClaw', confirm: true }, fakePage(calls, { items: { 1: 1, 2: 4 } }));
+  assert.deepEqual(r.removed, [1, 2]);
+});
+
+test('a removed product no longer counts, so a later add starts again at the new quantity', async () => {
+  const page = fakePage([], { items: { 5: 3 } });
+  await ops.remove({ op: 'remove', list: 'NanoClaw', items: [{ stockcode: 5 }] }, page);
+  const r = await ops.add({ op: 'add', list: 'NanoClaw', items: [{ stockcode: 5, qty: 2 }] }, page);
+  assert.equal(r.results[0].quantity, 2);
+});
+
+test('removing from any list other than NanoClaw is refused', async () => {
+  await assert.rejects(ops.remove({ op: 'remove', list: 'Other', items: [{ stockcode: 1 }] }, fakePage([], { items: { 1: 1 } })), /only remove items from the NanoClaw list/);
+  await assert.rejects(ops.clear({ op: 'clear', list: 'Other', confirm: true }, fakePage([], { items: { 1: 1 } })), /only remove items/);
 });

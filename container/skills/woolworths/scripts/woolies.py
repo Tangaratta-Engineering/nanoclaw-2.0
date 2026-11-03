@@ -86,6 +86,10 @@ def run(argv, ask=ask):
     s.add_argument("--list", default=DEFAULT_LIST); s.add_argument("items", nargs="+")
     s = sub.add_parser("set", help="make the list hold exactly this quantity of each product (STOCKCODE=QTY)")
     s.add_argument("--list", default=DEFAULT_LIST); s.add_argument("items", nargs="+")
+    s = sub.add_parser("remove", help="take products (STOCKCODE ...) off the NanoClaw list")
+    s.add_argument("items", nargs="+")
+    s = sub.add_parser("clear", help="empty the NanoClaw list (needs --yes, i.e. George asked for it)")
+    s.add_argument("--yes", action="store_true", help="George has asked for the list to be cleared")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "status":
@@ -109,6 +113,17 @@ def run(argv, ask=ask):
                     return f"The '{a.list}' list doesn't exist yet; it is created the first time something is added."
                 raise
             return f"{d['list']}: {d['total']} items\n" + "\n".join(f"x{p.get('qty', 1)} | " + fmt_item(p) for p in d["items"])
+        if a.cmd == "remove":
+            d = ask({"op": "remove", "list": DEFAULT_LIST, "items": [{"stockcode": parse_item(i)["stockcode"]} for i in a.items]})
+            out = f"Removed from the Woolworths list '{d['list']}': " + (", ".join(map(str, d["removed"])) or "nothing")
+            if d["notOnList"]:
+                out += "\nWasn't on the list: " + ", ".join(map(str, d["notOnList"]))
+            return out
+        if a.cmd == "clear":
+            if not a.yes:
+                raise WooliesError("clear empties the whole list: only run it with --yes after George has asked you to clear or empty it")
+            d = ask({"op": "clear", "list": DEFAULT_LIST, "confirm": True})
+            return f"Cleared the Woolworths list '{d['list']}': removed {len(d['removed'])} item(s)."
         if a.cmd in ("add", "set"):
             d = ask({"op": a.cmd, "list": a.list, "create": a.list == DEFAULT_LIST, "items": [parse_item(i) for i in a.items]})
             lines = []
