@@ -4,12 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Adapter, AdapterPostableMessage, RawMessage } from 'chat';
 
-import {
-  createChatSdkBridge,
-  parseDiscordCustomId,
-  resolveSelectedOption,
-  splitForLimit,
-} from './chat-sdk-bridge.js';
+import { createChatSdkBridge, parseDiscordCustomId, resolveSelectedOption, splitForLimit } from './chat-sdk-bridge.js';
 
 vi.mock('../webhook-server.js', () => ({
   registerWebhookAdapter: vi.fn(),
