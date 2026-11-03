@@ -16,17 +16,19 @@ Read the board left to right by theme, top to bottom by detail.
 
 | Card | Colour | What it is | How to write it |
 |---|---|---|---|
-| Category | Green | A broad theme across the top | Short noun phrase: "Family Activities", "George's Projects" |
-| Outcome | Blue | An event or core outcome under a category; starts a column | The thing to achieve or the event: "Mum's birthday", "Gates / front porch" |
+| Category | Green, top row | A broad theme across the top. Called a **super epic** when it has epics under it | Short noun phrase: "Family Activities", "George's Projects" |
+| Epic | Green, second row (optional) | A group of related outcomes inside a category | Short noun phrase: "Outside", "Inside" |
+| Outcome | Blue | An event or core outcome under a category or an epic; starts a column | The thing to achieve or the event: "Mum's birthday", "Gates / front porch" |
 | Result | Yellow | A result that proves the outcome is done; stacks under its outcome | **Describe the finished state, not the action.** "Locks fitted", not "Fit locks". "Packing list done", not "Write packing list" |
 | Unknown | Pink | A research item or open question; something that can't just be done yet because it needs finding out first | A question or the thing to find out: "Xmas where?", "Are we making the chestplate from EVA foam, or buying it?" |
 
 Other conventions already on the wall:
 
 - **(H)** and **(S)** at the end of a card mean it's for Henry or Sophie. A "Henry:" prefix means the same.
-- A **sub-heading** is a green column inside a category (for example "Outside" under George's Projects). Its cards can be blue outcome cards. Use one only when George asks for a sub-group.
+- **Green and blue cards never share a row.** If any category has an epic, the board adds an epic row and every blue card on the whole board drops below it. Categories with no epics just show a gap on that row. The page handles this; you only choose where things belong.
+- An **epic** holds blue outcomes only (never cards directly). A category can hold epics and plain outcomes side by side. Epics can't contain epics. Create one only when George asks for a sub-group, or agrees when you suggest one.
 - A ticked **result** means achieved. A ticked **unknown** means answered. Ticked cards stay on the board, shown crossed out.
-- A **completed outcome** (blue) moves, with all its cards, to the **Completed** row at the bottom of the board, newest first and labelled with the category it came from. It still belongs to that category in the data, so reopening it puts it straight back where it was. Green sub-headings can't be completed.
+- A **completed outcome** (blue) moves, with all its cards, to the **Completed** row at the bottom of the board, newest first and labelled with the category (and epic) it came from. It still belongs there in the data, so reopening it puts it straight back where it was. Green cards (categories and epics) can't be completed; complete their outcomes instead.
 - Card text can span lines (use `\n`). Keep it short; these are index cards (280-character limit).
 
 ### Coaching George on wording
@@ -37,7 +39,7 @@ When George asks for a yellow card worded as a task ("buy fireworks tickets"), s
 
 `storymap` is at `/app/skills/story-map/scripts/storymap`. There is no token in the container: the OneCLI gateway injects George's GitHub credential for `api.github.com` (a fine-grained token limited to the **firsthalfhero/roadmapping** repo, Contents: read and write). Check reading works with `storymap show`. If a command fails with HTTP 401, 403 or 404, the credential is missing or expired: tell George, don't ask him for a token in chat.
 
-The tool and these instructions ship with NanoClaw and are updated by George on the server. If a command described here is missing, tell George the story-map skill needs updating. `self-update` is not used in this install, and the skill folder is read-only.
+The tool and these instructions ship with NanoClaw and are updated by George on the server. If a command described here is missing, or `show` crashes on the board's structure, tell George the story-map skill needs updating. `self-update` is not used in this install, and the skill folder is read-only. Don't work around it by running a copy of the tool from a clone or another folder: that skips the credential setup and review.
 
 Optional environment variables: `STORYMAP_REPO` (default `firsthalfhero/roadmapping`), `STORYMAP_BRANCH` (default `main`).
 
@@ -60,7 +62,8 @@ Run every command as `/app/skills/story-map/scripts/storymap <command> ...` (wri
 | Command | What it does |
 |---|---|
 | `add-category "Title" [--index N]` | New green category (default: far right) |
-| `add-outcome CATEGORY_ID "Title" [--index N] [--subheading]` | New blue column under a category |
+| `add-epic CATEGORY_ID "Title" [--index N]` | New green epic under a category (the category becomes a super epic) |
+| `add-outcome CATEGORY_OR_EPIC_ID "Title" [--index N]` | New blue column directly under a category, or under an epic |
 | `add-card OUTCOME_ID result "Text" [--index N] [--done]` | New yellow card (default: bottom of the column) |
 | `add-card OUTCOME_ID unknown "Text"` | New pink card |
 | `edit ID "New text" [--type result\|unknown]` | Reword any card, outcome or category |
@@ -70,7 +73,8 @@ Run every command as `/app/skills/story-map/scripts/storymap <command> ...` (wri
 | `complete OUTCOME_ID [...]` | Complete blue outcomes (same as `done`, but refuses anything that isn't an outcome) |
 | `reopen OUTCOME_ID [...]` | Move completed outcomes back into their category |
 | `move CARD_ID --to OUTCOME_ID [--index N]` | Move a card to another column |
-| `move OUTCOME_ID --to CATEGORY_ID [--index N]` | Move a whole column to another category |
+| `move OUTCOME_ID --to CATEGORY_OR_EPIC_ID [--index N]` | Move a whole column to another category, or into or out of an epic |
+| `move EPIC_ID --to CATEGORY_ID [--index N]` | Move an epic, with its outcomes, to another category |
 | `move ID --index N` | Reorder within its current place (works for categories too) |
 | `remove ID` | Delete a card, or an empty outcome or category |
 | `remove ID --force` | Delete an outcome or category **and everything under it** |
@@ -109,6 +113,8 @@ When George says an event or outcome is finished ("Mum's birthday is done", "the
 | "Christmas is at home, sorted" | `find "Xmas where"` → `done <id>`, and optionally `edit <id> "Xmas where?\nAt home"` |
 | "Move the roof rack question to the summer holiday" | `find "roof rack"` and `find "Summer"` → `move <card-id> --to <summer-id>` |
 | "New category for the school P&C" | `add-category "School P&C"`, then ask what outcomes go under it |
+| "Group the outside jobs under an Outside epic" | `find Outside` (it may exist) → else `add-epic <category-id> "Outside"` → `move <outcome-id> --to <epic-id>` for each outside job |
+| "Add re-turfing the back lawn to Outside" | `find Outside` → `add-outcome <epic-id> "Back lawn re-turfed"` |
 | "What's left for Halloween?" | `find Halloween` → `show --open-only`, and summarise that column only |
 | "Halloween's done" | `find Halloween` → `complete <outcome-id>`. If the tool notes open cards under it, ask George whether to tick those too |
 | "Mum's birthday wasn't finished, put it back" | `find Mum` → `reopen <outcome-id>` |
@@ -143,7 +149,7 @@ George can drag cards around and edit them on the web page, but **the page can't
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "updated": "2026-11-03T09:15:00+00:00",
   "groups": [
     { "id": "g1", "title": "Weekends / Holidays / Trips",
@@ -154,14 +160,15 @@ George can drag cards around and edit them on the web page, but **the page can't
             { "id": "i3", "type": "pink",   "text": "Nala feed + care", "done": false },
             { "id": "i5", "type": "yellow", "text": "Julie plan / task list", "done": false }
           ] },
-        { "id": "o53", "title": "Outside", "kind": "green",
-          "items": [ { "id": "i54", "type": "blue", "text": "Driveway pebbles", "done": false } ] }
+        { "id": "o53", "title": "Outside", "kind": "epic",
+          "outcomes": [ { "id": "i54", "title": "Driveway pebbles", "items": [] } ] }
       ] }
   ]
 }
 ```
 
-- `groups` = green categories, left to right. `outcomes` = columns, left to right. `items` = cards, top to bottom.
+- `groups` = green categories, left to right. A category's `outcomes` = its blue outcomes and green epics, left to right. An epic (`"kind": "epic"`) has its own `outcomes` list of blue outcomes. `items` = cards, top to bottom.
 - A completed outcome has `"done": true` and `"doneAt"` (UTC timestamp). The page shows it in the Completed row; it stays in its category's `outcomes` list.
-- `type`: `yellow` result, `pink` unknown, `blue` outcome card (only inside a `"kind": "green"` sub-heading column).
+- `type`: `yellow` result or `pink` unknown.
+- Older boards had green "sub-heading" columns (`"kind": "green"`) holding blue cards. The tool converts them into epics automatically the next time it saves.
 - Ids are unique strings. Never reuse one.

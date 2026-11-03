@@ -21,8 +21,8 @@ BRANCH = os.environ.get("STORYMAP_BRANCH", "main")
 PATH = "map.json"
 API = "https://api.github.com"
 
-TYPE_ALIASES = {"result": "yellow", "yellow": "yellow", "unknown": "pink", "pink": "pink", "red": "pink", "research": "pink", "outcome": "blue", "blue": "blue"}
-TYPE_LABEL = {"yellow": "RESULT", "pink": "UNKNOWN", "blue": "OUTCOME"}
+TYPE_ALIASES = {"result": "yellow", "yellow": "yellow", "unknown": "pink", "pink": "pink", "red": "pink", "research": "pink"}
+TYPE_LABEL = {"yellow": "RESULT", "pink": "UNKNOWN"}
 
 
 class Fail(Exception):
@@ -93,9 +93,68 @@ class Conflict(Exception):
 
 
 # ---------- model helpers ----------
+#
+# Hierarchy (left to right by theme, top to bottom by detail):
+#   category (green)           -> "super epic" when it holds any epics
+#     epic (green, optional)   -> {"kind": "epic", "outcomes": [...]}, sits on its own row
+#       outcome (blue)         -> {"items": [...]}, may be completed (done + doneAt)
+#         card (yellow / pink) -> {"type", "text", "done"}
+# A category's "outcomes" list holds outcomes and epics side by side; epics hold outcomes only.
 
 def now_iso():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+def an(w):
+    return ("an " if w[:1].lower() in "aeiou" else "a ") + w
+
+
+def is_epic(n):
+    return n.get("kind") == "epic"
+
+
+def is_completed(o):
+    return not is_epic(o) and o.get("done") is True
+
+
+def has_epics(g):
+    return any(is_epic(n) for n in g["outcomes"])
+
+
+def iter_outcomes(g):
+    """Yield (epic_or_None, outcome) for every blue outcome in a category."""
+    for n in g["outcomes"]:
+        if is_epic(n):
+            for o in n["outcomes"]:
+                yield n, o
+        else:
+            yield None, n
+
+
+def migrate(data):
+    """Convert old green sub-heading columns (kind "green" with blue item cards) into epics.
+    Returns True if anything changed."""
+    changed = False
+    for g in data.get("groups", []):
+        for n in g.get("outcomes", []):
+            if n.get("kind") == "green":
+                items = n.pop("items", [])
+                outs = []
+                for it in items:
+                    if it.get("type") == "blue":
+                        o = {"id": it["id"], "title": it.get("text", ""), "items": []}
+                        if it.get("done"):
+                            o["done"] = True
+                            o["doneAt"] = now_iso()
+                        outs.append(o)
+                rest = [it for it in items if it.get("type") != "blue"]
+                if rest:
+                    outs.append({"id": n["id"] + "-cards", "title": n.get("title", "Cards"), "items": rest})
+                n["kind"] = "epic"
+                n.pop("done", None); n.pop("doneAt", None)
+                n["outcomes"] = outs
+                changed = True
+    return changed
 
 
 def new_id(prefix, data):
@@ -107,27 +166,49 @@ def new_id(prefix, data):
 
 
 def walk(data):
-    """Yield every node (category, outcome, card) with an 'id'."""
+    """Yield every node (category, epic, outcome, card) with an 'id'."""
     for g in data["groups"]:
         yield g
-        for o in g["outcomes"]:
-            yield o
-            for c in o["items"]:
-                yield c
+        for n in g["outcomes"]:
+            yield n
+            for o in (n["outcomes"] if is_epic(n) else [n]):
+                if o is not n:
+                    yield o
+                for c in o["items"]:
+                    yield c
 
 
 def locate(data, id_):
-    """Return (level, node, parent_list, parent_node) for an id."""
+    """Return (level, node, parent_list, parent_node) for an id.
+    level is one of: category, epic, outcome, card."""
     for g in data["groups"]:
         if g["id"] == id_:
             return "category", g, data["groups"], None
-        for o in g["outcomes"]:
-            if o["id"] == id_:
-                return "outcome", o, g["outcomes"], g
-            for c in o["items"]:
-                if c["id"] == id_:
-                    return "card", c, o["items"], o
-    raise Fail(f"No category, outcome or card with id '{id_}'. Run `show` to see ids.")
+        for n in g["outcomes"]:
+            if is_epic(n):
+                if n["id"] == id_:
+                    return "epic", n, g["outcomes"], g
+                pool, owner = n["outcomes"], n
+            else:
+                pool, owner = [n], g
+            for o in pool:
+                if o["id"] == id_:
+                    return "outcome", o, (n["outcomes"] if is_epic(n) else g["outcomes"]), owner
+                for c in o["items"]:
+                    if c["id"] == id_:
+                        return "card", c, o["items"], o
+    raise Fail(f"No category, epic, outcome or card with id '{id_}'. Run `show` to see ids.")
+
+
+def where(data, id_):
+    """Human path for an outcome or epic: 'Category > Epic'."""
+    for g in data["groups"]:
+        for n in g["outcomes"]:
+            if n["id"] == id_:
+                return g["title"]
+            if is_epic(n) and any(o["id"] == id_ for o in n["outcomes"]):
+                return f"{g['title']} > {n['title']}"
+    return ""
 
 
 def insert(lst, item, index):
@@ -141,7 +222,8 @@ def norm_type(t):
     try:
         return TYPE_ALIASES[t.lower()]
     except KeyError:
-        raise Fail(f"Card type must be 'result' (yellow), 'unknown' (pink) or 'outcome' (blue, only under a sub-heading), not '{t}'.")
+        raise Fail(f"Card type must be 'result' (yellow) or 'unknown' (pink), not '{t}'. "
+                   "Blue outcomes are added with add-outcome, green epics with add-epic.")
 
 
 def clean_text(t):
@@ -159,14 +241,34 @@ def validate(data):
         return ["Top level must be an object with a 'groups' list."]
     seen = set()
 
-    def chk_id(n, where):
+    def chk_id(n, where_):
         i = n.get("id")
         if not isinstance(i, str) or not i:
-            problems.append(f"{where}: missing id")
+            problems.append(f"{where_}: missing id")
         elif i in seen:
-            problems.append(f"{where}: duplicate id '{i}'")
+            problems.append(f"{where_}: duplicate id '{i}'")
         else:
             seen.add(i)
+
+    def chk_outcome(o, w2):
+        chk_id(o, w2)
+        if not str(o.get("title", "")).strip():
+            problems.append(f"{w2}: empty title")
+        if "kind" in o and o["kind"] != "blue":
+            problems.append(f"{w2}: an outcome can't have kind '{o['kind']}'")
+        if "done" in o and not isinstance(o["done"], bool):
+            problems.append(f"{w2}: done must be true/false")
+        if not isinstance(o.get("items"), list):
+            problems.append(f"{w2}: 'items' must be a list"); return
+        for ci, c in enumerate(o["items"]):
+            w3 = f"{w2} > card #{ci+1}"
+            chk_id(c, w3)
+            if c.get("type") not in ("yellow", "pink"):
+                problems.append(f"{w3}: type must be 'yellow' or 'pink'")
+            if not str(c.get("text", "")).strip():
+                problems.append(f"{w3}: empty text")
+            if not isinstance(c.get("done", False), bool):
+                problems.append(f"{w3}: done must be true/false")
 
     for gi, g in enumerate(data["groups"]):
         w = f"category #{gi+1}"
@@ -175,47 +277,37 @@ def validate(data):
             problems.append(f"{w}: empty title")
         if not isinstance(g.get("outcomes"), list):
             problems.append(f"{w}: 'outcomes' must be a list"); continue
-        for oi, o in enumerate(g["outcomes"]):
-            w2 = f"{w} > outcome #{oi+1}"
-            chk_id(o, w2)
-            if not str(o.get("title", "")).strip():
-                problems.append(f"{w2}: empty title")
-            if o.get("kind", "blue") not in ("blue", "green"):
-                problems.append(f"{w2}: kind must be 'blue' or 'green'")
-            if "done" in o and not isinstance(o["done"], bool):
-                problems.append(f"{w2}: done must be true/false")
-            if o.get("done") and o.get("kind") == "green":
-                problems.append(f"{w2}: sub-headings can't be completed")
-            if not isinstance(o.get("items"), list):
-                problems.append(f"{w2}: 'items' must be a list"); continue
-            for ci, c in enumerate(o["items"]):
-                w3 = f"{w2} > card #{ci+1}"
-                chk_id(c, w3)
-                if c.get("type") not in ("yellow", "pink", "blue"):
-                    problems.append(f"{w3}: type must be 'yellow', 'pink' or 'blue'")
-                elif c["type"] == "blue" and o.get("kind") != "green":
-                    problems.append(f"{w3}: blue cards only belong under a green sub-heading column")
-                if not str(c.get("text", "")).strip():
-                    problems.append(f"{w3}: empty text")
-                if not isinstance(c.get("done", False), bool):
-                    problems.append(f"{w3}: done must be true/false")
+        for oi, n in enumerate(g["outcomes"]):
+            if is_epic(n):
+                we = f"{w} > epic #{oi+1}"
+                chk_id(n, we)
+                if not str(n.get("title", "")).strip():
+                    problems.append(f"{we}: empty title")
+                if "items" in n:
+                    problems.append(f"{we}: epics hold outcomes, not cards")
+                if n.get("done"):
+                    problems.append(f"{we}: epics can't be completed; complete their outcomes")
+                if not isinstance(n.get("outcomes"), list):
+                    problems.append(f"{we}: 'outcomes' must be a list"); continue
+                for ei, o in enumerate(n["outcomes"]):
+                    if is_epic(o):
+                        problems.append(f"{we} > #{ei+1}: epics can't contain epics"); continue
+                    chk_outcome(o, f"{we} > outcome #{ei+1}")
+            else:
+                chk_outcome(n, f"{w} > outcome #{oi+1}")
     return problems
 
 
-def is_completed(o):
-    return o.get("done") is True and o.get("kind") != "green"
-
-
-def _outcome_lines(o, show_done, label, suffix=""):
+def _outcome_lines(o, show_done, label, indent, suffix=""):
     items = o["items"]
     open_n = sum(1 for c in items if not c.get("done"))
-    out = [f"  [{label} {o['id']}] {o['title']}  ({open_n} open / {len(items)} cards){suffix}"]
+    out = [f"{indent}[{label} {o['id']}] {o['title']}  ({open_n} open / {len(items)} cards){suffix}"]
     for c in items:
         if c.get("done") and not show_done:
             continue
         box = "[x]" if c.get("done") else "[ ]"
         text = c["text"].replace("\n", " / ")
-        out.append(f"    {box} {TYPE_LABEL[c['type']]:<7} {c['id']}  {text}")
+        out.append(f"{indent}  {box} {TYPE_LABEL[c['type']]:<7} {c['id']}  {text}")
     return out
 
 
@@ -226,17 +318,24 @@ def render_text(data, show_done=True):
         out.append(f"Last saved: {upd}")
     completed = []
     for g in data["groups"]:
-        out.append(f"\n[CATEGORY {g['id']}] {g['title']}")
-        for o in g["outcomes"]:
-            if is_completed(o):
-                completed.append((g, o)); continue
-            label = "SUB-HEADING" if o.get("kind") == "green" else "OUTCOME"
-            out += _outcome_lines(o, show_done, label)
+        label = "SUPER EPIC" if has_epics(g) else "CATEGORY"
+        out.append(f"\n[{label} {g['id']}] {g['title']}")
+        for n in g["outcomes"]:
+            if is_epic(n):
+                out.append(f"  [EPIC {n['id']}] {n['title']}")
+                for o in n["outcomes"]:
+                    if is_completed(o):
+                        completed.append((f"{g['title']} > {n['title']}", o)); continue
+                    out += _outcome_lines(o, show_done, "OUTCOME", "    ")
+            elif is_completed(n):
+                completed.append((g["title"], n))
+            else:
+                out += _outcome_lines(n, show_done, "OUTCOME", "  ")
     if completed and show_done:
-        completed.sort(key=lambda go: go[1].get("doneAt", ""), reverse=True)
-        out.append("\n[COMPLETED ROW] (completed outcomes, newest first; they still belong to their category)")
-        for g, o in completed:
-            out += _outcome_lines(o, True, "COMPLETED", f"  from '{g['title']}', completed {o.get('doneAt', '?')[:10]}")
+        completed.sort(key=lambda po: po[1].get("doneAt", ""), reverse=True)
+        out.append("\n[COMPLETED ROW] (completed outcomes, newest first; they still belong where they came from)")
+        for path, o in completed:
+            out += _outcome_lines(o, True, "COMPLETED", "  ", f"  from '{path}', completed {o.get('doneAt', '?')[:10]}")
     elif completed:
         out.append(f"\n({len(completed)} completed outcome(s) hidden; run `show` without --open-only to see them)")
     return "\n".join(out)
@@ -256,15 +355,18 @@ def cmd_find(data, a):
     q = a.text.lower()
     hits = 0
     for g in data["groups"]:
-        for label, node, path in [("CATEGORY", g, g["title"])]:
-            if q in node["title"].lower():
-                print(f"{label:<8} {node['id']}  {path}"); hits += 1
-        for o in g["outcomes"]:
+        if q in g["title"].lower():
+            print(f"{'SUPER EPIC' if has_epics(g) else 'CATEGORY':<10} {g['id']}  {g['title']}"); hits += 1
+        for n in g["outcomes"]:
+            if is_epic(n) and q in n["title"].lower():
+                print(f"{'EPIC':<10} {n['id']}  {g['title']} > {n['title']}"); hits += 1
+        for e, o in iter_outcomes(g):
+            path = g["title"] + (f" > {e['title']}" if e else "")
             if q in o["title"].lower():
-                print(f"OUTCOME  {o['id']}  {g['title']} > {o['title']}" + ("  (completed)" if is_completed(o) else "")); hits += 1
+                print(f"{'OUTCOME':<10} {o['id']}  {path} > {o['title']}" + ("  (completed)" if is_completed(o) else "")); hits += 1
             for c in o["items"]:
                 if q in c["text"].lower():
-                    print(f"CARD     {c['id']}  {g['title']} > {o['title']} > {c['text'].splitlines()[0]}"
+                    print(f"{'CARD':<10} {c['id']}  {path} > {o['title']} > {c['text'].splitlines()[0]}"
                           + ("  (done)" if c.get("done") else "")); hits += 1
     if not hits:
         print("No matches.")
@@ -284,23 +386,31 @@ def cmd_add_category(data, a):
     return f"Add category: {g['title']}"
 
 
-def cmd_add_outcome(data, a):
+def cmd_add_epic(data, a):
     lvl, g, _, _ = locate(data, a.category_id)
     if lvl != "category":
-        raise Fail(f"'{a.category_id}' is a {lvl}, not a category.")
-    o = {"id": new_id("o", data), "title": clean_text(a.title)}
-    if a.subheading:
-        o["kind"] = "green"
-    o["items"] = []
-    insert(g["outcomes"], o, a.index)
-    print(f"Added outcome {o['id']} under '{g['title']}': {o['title']}")
+        raise Fail(f"'{a.category_id}' is {an(lvl)}; epics go directly under a category (which then becomes a super epic).")
+    e = {"id": new_id("e", data), "title": clean_text(a.title), "kind": "epic", "outcomes": []}
+    insert(g["outcomes"], e, a.index)
+    print(f"Added epic {e['id']} under '{g['title']}': {e['title']}"
+          + ("" if sum(is_epic(n) for n in g["outcomes"]) > 1 else f" ('{g['title']}' is now a super epic)"))
+    return f"Add epic: {e['title']}"
+
+
+def cmd_add_outcome(data, a):
+    lvl, parent, _, _ = locate(data, a.parent_id)
+    if lvl not in ("category", "epic"):
+        raise Fail(f"'{a.parent_id}' is {an(lvl)}; outcomes go under a category or an epic.")
+    o = {"id": new_id("o", data), "title": clean_text(a.title), "items": []}
+    insert(parent["outcomes"], o, a.index)
+    print(f"Added outcome {o['id']} under {lvl} '{parent['title']}': {o['title']}")
     return f"Add outcome: {o['title']}"
 
 
 def cmd_add_card(data, a):
-    lvl, o, _, g = locate(data, a.outcome_id)
+    lvl, o, _, _ = locate(data, a.outcome_id)
     if lvl != "outcome":
-        raise Fail(f"'{a.outcome_id}' is a {lvl}; cards go under an outcome.")
+        raise Fail(f"'{a.outcome_id}' is {an(lvl)}; cards go under a blue outcome.")
     c = {"id": new_id("c", data), "type": norm_type(a.type), "text": clean_text(a.text), "done": bool(a.done)}
     insert(o["items"], c, a.index)
     print(f"Added {TYPE_LABEL[c['type']].lower()} card {c['id']} to '{o['title']}': {c['text']}")
@@ -336,8 +446,6 @@ def _set_done(data, a, value):
     for id_ in a.ids:
         lvl, n, _, _ = locate(data, id_)
         if lvl == "outcome":
-            if n.get("kind") == "green":
-                raise Fail(f"'{id_}' is a sub-heading; only blue outcomes can be completed.")
             label = n["title"]
             if value:
                 if not n.get("done"):
@@ -349,11 +457,11 @@ def _set_done(data, a, value):
                     print(f"  Note: {len(left)} card(s) under it are still open: " + "; ".join(left))
             else:
                 n.pop("done", None); n.pop("doneAt", None)
-                print(f"Reopened outcome: {label} (back in its category)")
+                print(f"Reopened outcome: {label} (back under '{where(data, id_)}')")
             msgs.append(label)
             continue
         if lvl != "card":
-            raise Fail(f"'{id_}' is a {lvl}; only cards and outcomes can be ticked off.")
+            raise Fail(f"'{id_}' is {an(lvl)}; only cards and blue outcomes can be ticked off.")
         n["done"] = value
         msgs.append(n["text"].splitlines()[0])
         print(("Done: " if value else "Reopened: ") + n["text"].splitlines()[0])
@@ -372,7 +480,7 @@ def _outcomes_only(data, a):
     for id_ in a.ids:
         lvl, n, _, _ = locate(data, id_)
         if lvl != "outcome":
-            raise Fail(f"'{id_}' is a {lvl}; complete/reopen only work on blue outcomes. Use done/undo for cards.")
+            raise Fail(f"'{id_}' is {an(lvl)}; complete/reopen only work on blue outcomes. Use done/undo for cards.")
 
 
 def cmd_complete(data, a):
@@ -398,9 +506,9 @@ def cmd_move(data, a):
         dest_list = plist
     else:
         tl, tnode, _, _ = locate(data, a.to)
-        want = "outcome" if lvl == "card" else "category"
-        if tl != want:
-            raise Fail(f"A {lvl} must move to a{'n' if want == 'outcome' else ''} {want}; '{a.to}' is a {tl}.")
+        allowed = {"card": ("outcome",), "outcome": ("category", "epic"), "epic": ("category",)}[lvl]
+        if tl not in allowed:
+            raise Fail(f"{an(lvl).capitalize()} can move to {' or '.join(an(x) for x in allowed)}; '{a.to}' is {an(tl)}.")
         dest_list = tnode["items"] if lvl == "card" else tnode["outcomes"]
     plist.remove(n)
     insert(dest_list, n, a.index)
@@ -423,6 +531,7 @@ def cmd_remove(data, a):
 def cmd_import(data, a):
     with open(a.path, encoding="utf-8") as f:
         new = json.load(f)
+    migrate(new)
     probs = validate(new)
     if probs:
         raise Fail("Import file is invalid:\n- " + "\n- ".join(probs))
@@ -457,23 +566,27 @@ def build_parser():
     s = sp.add_parser("validate", help="Check map.json is well-formed.")
     s.set_defaults(fn=cmd_validate, write=False)
 
-    s = sp.add_parser("add-category", help="Add a green category card.")
+    s = sp.add_parser("add-category", help="Add a green category (top row).")
     s.add_argument("title"); s.add_argument("--index", type=int, help="0-based position (default: end).")
     s.set_defaults(fn=cmd_add_category, write=True)
 
-    s = sp.add_parser("add-outcome", help="Add a blue outcome column under a category.")
+    s = sp.add_parser("add-epic", help="Add a green epic under a category (the category becomes a super epic).")
     s.add_argument("category_id"); s.add_argument("title")
     s.add_argument("--index", type=int, help="0-based position within the category (default: end).")
-    s.add_argument("--subheading", action="store_true", help="Show it as a green sub-heading column instead of blue.")
+    s.set_defaults(fn=cmd_add_epic, write=True)
+
+    s = sp.add_parser("add-outcome", help="Add a blue outcome column under a category or an epic.")
+    s.add_argument("parent_id", help="Category id or epic id."); s.add_argument("title")
+    s.add_argument("--index", type=int, help="0-based position within the category or epic (default: end).")
     s.set_defaults(fn=cmd_add_outcome, write=True)
 
-    s = sp.add_parser("add-card", help="Add a yellow result or pink unknown card under an outcome (or a blue outcome card under a sub-heading).")
-    s.add_argument("outcome_id"); s.add_argument("type", help="result | unknown | outcome"); s.add_argument("text")
+    s = sp.add_parser("add-card", help="Add a yellow result or pink unknown card under a blue outcome.")
+    s.add_argument("outcome_id"); s.add_argument("type", help="result | unknown"); s.add_argument("text")
     s.add_argument("--index", type=int, help="0-based position in the column (default: bottom).")
     s.add_argument("--done", action="store_true", help="Add it already ticked off.")
     s.set_defaults(fn=cmd_add_card, write=True)
 
-    s = sp.add_parser("edit", help="Change the text of any card, outcome or category.")
+    s = sp.add_parser("edit", help="Change the text of any card, outcome, epic or category.")
     s.add_argument("id"); s.add_argument("text"); s.add_argument("--type", help="Also change a card's type.")
     s.set_defaults(fn=cmd_edit, write=True)
 
@@ -492,12 +605,12 @@ def build_parser():
     s = sp.add_parser("reopen", help="Move completed blue outcomes back into their category.")
     s.add_argument("ids", nargs="+"); s.set_defaults(fn=cmd_reopen, write=True)
 
-    s = sp.add_parser("move", help="Move a card to another outcome, an outcome to another category, or reorder.")
-    s.add_argument("id"); s.add_argument("--to", help="Destination outcome (for a card) or category (for an outcome). Omit to reorder in place.")
+    s = sp.add_parser("move", help="Move a card to another outcome, an outcome to a category or epic, an epic to another category, or reorder.")
+    s.add_argument("id"); s.add_argument("--to", help="Destination: outcome (for a card), category or epic (for an outcome), category (for an epic). Omit to reorder in place.")
     s.add_argument("--index", type=int, help="0-based position at the destination (default: end).")
     s.set_defaults(fn=cmd_move, write=True)
 
-    s = sp.add_parser("remove", help="Delete a card, outcome or category.")
+    s = sp.add_parser("remove", help="Delete a card, outcome, epic or category.")
     s.add_argument("id"); s.add_argument("--force", action="store_true", help="Also delete everything under it.")
     s.set_defaults(fn=cmd_remove, write=True)
 
@@ -519,6 +632,7 @@ def main(argv=None):
         store = Store(a.file)
         for attempt in range(3):
             data = store.load()
+            migrated = migrate(data)
             msg = a.fn(data, a)
             if not a.write:
                 return 0
@@ -528,10 +642,10 @@ def main(argv=None):
             if a.dry_run:
                 print("(dry run: nothing saved)")
                 return 0
-            data["version"] = 1
+            data["version"] = 2
             data["updated"] = now_iso()
             # keep key order tidy: version, updated, groups
-            data = {"version": 1, "updated": data["updated"], "groups": data["groups"]}
+            data = {"version": 2, "updated": data["updated"], "groups": data["groups"]}
             try:
                 result = store.save(data, a.message or ("storymap: " + msg))
                 print(result + ("" if a.file else ". The board updates in about a minute."))
