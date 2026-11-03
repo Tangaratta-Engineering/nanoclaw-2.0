@@ -103,6 +103,145 @@ def cmd_add(a, run=subprocess.run):
     return f"Added: {r.get('summary')} | {a.start} | {r.get('htmlLink', '')}"
 
 
+# ---- find / edit / delete / restore: changes to EXISTING events need George's explicit yes ------------
+# Two steps: `edit`/`delete` only previews and prints a one-time token; the change is made by repeating the
+# command with `--confirm TOKEN`, and only after George has said yes to that exact preview. Every applied
+# change logs the event as it was, so `restore` can undo a delete and the old values can be re-applied.
+
+PENDING = os.path.join(DATA, "calendar-pending.json")
+CHANGELOG = os.path.join(DATA, "calendar-changes.jsonl")
+TOKEN_TTL = 30 * 60
+
+
+def _read_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def _ev_url(cal, event_id):
+    return f"{API}/{urllib.parse.quote(cal, safe='')}/events/{urllib.parse.quote(event_id, safe='')}"
+
+
+def describe(ev):
+    st = ev.get("start", {})
+    when = st.get("dateTime") or st.get("date") or "?"
+    en = ev.get("end", {})
+    until = en.get("dateTime") or en.get("date") or ""
+    out = f"{ev.get('summary', '(no title)')} | {when}" + (f" -> {until}" if until and until != when else "")
+    if ev.get("location"):
+        out += f" | {ev['location']}"
+    return out
+
+
+def cmd_find(a, run=subprocess.run):
+    today = dt.date.today()
+    t0 = day_bounds(today - dt.timedelta(days=a.past_days))[0]
+    t1 = day_bounds(today + dt.timedelta(days=a.days))[0]
+    q = (a.query or "").lower()
+    rows = []
+    for cal, label in calendar_ids(load_rules()["calendars"], run):
+        for e in list_events(cal, t0, t1, run):
+            if q and q not in e.get("summary", "").lower() and q not in e.get("description", "").lower():
+                continue
+            rows.append(f"{e['id']} | {label} | {describe(e)}")
+    return "\n".join(rows) or "No matching events."
+
+
+def _patch_from_args(a, ev):
+    patch = {}
+    if a.title:
+        patch["summary"] = a.title
+    if a.location is not None:
+        patch["location"] = a.location
+    if a.notes is not None:
+        patch["description"] = a.notes
+    if a.start or a.end:
+        old_start = ev.get("start", {})
+        old_end = ev.get("end", {})
+        day, when = parse_start(a.start) if a.start else (None, None)
+        if a.start and day:
+            patch["start"] = {"date": day.isoformat()}
+            end_day = dt.date.fromisoformat(a.end[:10]) if a.end else day
+            patch["end"] = {"date": (end_day + dt.timedelta(days=1)).isoformat()}
+        elif a.start:
+            end = dt.datetime.fromisoformat(a.end.replace(" ", "T")) if a.end else when + dt.timedelta(hours=1)
+            patch["start"] = {"dateTime": when.isoformat(), "timeZone": TZ}
+            patch["end"] = {"dateTime": end.isoformat(), "timeZone": TZ}
+        else:  # only the end changes
+            if "date" in old_start:
+                patch["end"] = {"date": (dt.date.fromisoformat(a.end[:10]) + dt.timedelta(days=1)).isoformat()}
+            else:
+                patch["end"] = {"dateTime": dt.datetime.fromisoformat(a.end.replace(" ", "T")).isoformat(), "timeZone": TZ}
+    if not patch:
+        raise CalError("nothing to change: give at least one of --title --start --end --location --notes")
+    return patch
+
+
+def _check_single(ev):
+    if ev.get("recurrence") or ev.get("recurringEventId"):
+        raise CalError("this is a repeating event; I don't change those. Ask George to change it in the Calendar app")
+    if ev.get("status") == "cancelled":
+        raise CalError("that event is already deleted (use restore to bring it back)")
+
+
+def _issue_token(op, cal, event_id, patch):
+    pend = {k: v for k, v in _read_json(PENDING, {}).items() if v.get("expires", 0) > dt.datetime.now().timestamp()}
+    import secrets
+    tok = secrets.token_hex(3)
+    pend[tok] = {"op": op, "cal": cal, "id": event_id, "patch": patch, "expires": dt.datetime.now().timestamp() + TOKEN_TTL}
+    os.makedirs(os.path.dirname(PENDING), exist_ok=True)
+    with open(PENDING, "w") as f:
+        json.dump(pend, f)
+    return tok
+
+
+def _take_token(tok, op, cal, event_id):
+    pend = _read_json(PENDING, {})
+    t = pend.pop(tok, None)
+    if not t or t["expires"] < dt.datetime.now().timestamp() or (t["op"], t["cal"], t["id"]) != (op, cal, event_id):
+        raise CalError("that confirmation code is unknown, expired, or for a different change. Run the command again without --confirm and show George the new preview")
+    with open(PENDING, "w") as f:
+        json.dump(pend, f)
+    return t
+
+
+def _log_change(op, cal, before, patch=None):
+    os.makedirs(os.path.dirname(CHANGELOG), exist_ok=True)
+    with open(CHANGELOG, "a") as f:
+        f.write(json.dumps({"at": dt.datetime.now().isoformat(timespec="seconds"), "op": op, "calendar": cal, "id": before.get("id"), "before": before, "patch": patch}) + "\n")
+
+
+def cmd_change(a, run=subprocess.run):
+    op = a.cmd  # edit | delete
+    ev = call("GET", _ev_url(a.calendar, a.event_id), None, run)
+    _check_single(ev)
+    patch = _patch_from_args(a, ev) if op == "edit" else None
+    if not a.confirm:
+        tok = _issue_token(op, a.calendar, a.event_id, patch)
+        lines = [f"PREVIEW ONLY, nothing changed yet.", f"Event: {describe(ev)}"]
+        if op == "edit":
+            lines.append("Change to: " + json.dumps({k: v for k, v in patch.items()}))
+        else:
+            lines.append("This event would be DELETED (it can be restored afterwards).")
+        lines.append(f"Show George exactly this and wait for a clear yes. Then run the same command again with: --confirm {tok}")
+        return "\n".join(lines)
+    t = _take_token(a.confirm, op, a.calendar, a.event_id)
+    _log_change(op, a.calendar, ev, t["patch"])
+    if op == "edit":
+        r = call("PATCH", _ev_url(a.calendar, a.event_id), t["patch"], run)
+        return f"Changed: {describe(r)} | {r.get('htmlLink', '')}"
+    call("DELETE", _ev_url(a.calendar, a.event_id), None, run)
+    return f"Deleted: {describe(ev)}. To undo: inbox-calendar restore {a.event_id}"
+
+
+def cmd_restore(a, run=subprocess.run):
+    r = call("PATCH", _ev_url(a.calendar, a.event_id), {"status": "confirmed"}, run)
+    return f"Restored: {describe(r)}"
+
+
 def main(argv=None, run=subprocess.run):
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -124,9 +263,25 @@ def main(argv=None, run=subprocess.run):
     s = sub.add_parser("learn", help="remember that events with this title are routine or a real appointment")
     s.add_argument("--title", required=True)
     s.add_argument("--as", dest="kind", choices=["routine", "appointment"], required=True)
+    s = sub.add_parser("find", help="list events (with ids) matching a text, to edit or delete")
+    s.add_argument("--query", default=""); s.add_argument("--days", type=int, default=60); s.add_argument("--past-days", type=int, default=7)
+    for name, hlp in (("edit", "change one event (preview first; needs George's yes, then --confirm)"), ("delete", "delete one event (preview first; needs George's yes, then --confirm)")):
+        s = sub.add_parser(name, help=hlp)
+        s.add_argument("event_id"); s.add_argument("--calendar", default="primary")
+        s.add_argument("--confirm", metavar="CODE", help="the code printed by the preview, ONLY after George said yes to it")
+        if name == "edit":
+            s.add_argument("--title"); s.add_argument("--start"); s.add_argument("--end"); s.add_argument("--location"); s.add_argument("--notes")
+    s = sub.add_parser("restore", help="bring back an event deleted with this tool")
+    s.add_argument("event_id"); s.add_argument("--calendar", default="primary")
     a = ap.parse_args(argv)
     try:
-        if a.cmd == "agenda":
+        if a.cmd == "find":
+            print(cmd_find(a, run))
+        elif a.cmd in ("edit", "delete"):
+            print(cmd_change(a, run))
+        elif a.cmd == "restore":
+            print(cmd_restore(a, run))
+        elif a.cmd == "agenda":
             print(cmd_agenda(a, run))
         elif a.cmd == "week":
             print(cmd_week(a, run))
