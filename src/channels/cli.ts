@@ -13,7 +13,9 @@
  *     { "text": "user message" }                          # default — talk to cli/local
  *     { "text": "...", "to": {"channelType": "discord",
  *                             "platformId": "discord:@me:149...",
- *                             "threadId": null} }         # route to a specific mg
+ *                             "threadId": null,
+ *                             "instance": "discord"} }    # route to a specific mg
+ *                                                         # (instance optional; default = channelType)
  *     { "text": "...", "to": {...}, "reply_to": {...} }   # + redirect replies
  *   Server → client:
  *     { "text": "agent reply" }
@@ -39,10 +41,29 @@ import path from 'path';
 
 import { DATA_DIR } from '../config.js';
 import { log } from '../log.js';
-import type { ChannelAdapter, ChannelSetup, DeliveryAddress, InboundEvent, OutboundMessage } from './adapter.js';
-import { registerChannelAdapter } from './channel-registry.js';
+import type {
+  ChannelAdapter,
+  ChannelDefaults,
+  ChannelSetup,
+  DeliveryAddress,
+  InboundEvent,
+  OutboundMessage,
+} from './adapter.js';
+import { INSTANCE_KEY_RE, registerChannelAdapter } from './channel-registry.js';
 
 const PLATFORM_ID = 'local';
+
+/**
+ * Terminal transport: every line the operator types is for the agent
+ * (pattern '.'), the socket is owner-only so senders are trusted ('public'),
+ * there is no thread or mention concept. Matches what
+ * scripts/init-cli-agent.ts has always created.
+ */
+const CLI_DEFAULTS: ChannelDefaults = {
+  dm: { engageMode: 'pattern', engagePattern: '.', threads: false, unknownSenderPolicy: 'public' },
+  group: { engageMode: 'pattern', engagePattern: '.', threads: false, unknownSenderPolicy: 'public' },
+  mentions: 'never',
+};
 
 function socketPath(): string {
   return path.join(DATA_DIR, 'cli.sock');
@@ -56,6 +77,7 @@ function createAdapter(): ChannelAdapter {
     name: 'cli',
     channelType: 'cli',
     supportsThreads: false,
+    defaults: CLI_DEFAULTS,
 
     async setup(config: ChannelSetup): Promise<void> {
       const sock = socketPath();
@@ -188,7 +210,7 @@ function createAdapter(): ChannelAdapter {
     };
     try {
       payload = JSON.parse(line);
-    } catch (err) {
+    } catch (_err) {
       log.warn('CLI: ignoring non-JSON line from client', { line });
       return;
     }
@@ -201,12 +223,9 @@ function createAdapter(): ChannelAdapter {
       // Routed message — admin transport. Build a full InboundEvent targeting
       // `to`'s channel/platform, and let `reply_to` (if any) redirect replies.
       // Does NOT claim the chat slot, so an active terminal chat isn't evicted.
-      // Optional adapter instance (e.g. "timmy" for the second Discord bot); absent = default instance.
-      const rawTo = payload.to as Record<string, unknown>;
-      const instance = typeof rawTo.instance === 'string' && rawTo.instance ? rawTo.instance : undefined;
       const event: InboundEvent = {
         channelType: to.channelType,
-        ...(instance ? { instance } : {}),
+        instance: to.instance,
         platformId: to.platformId,
         threadId: to.threadId,
         message: {
@@ -250,7 +269,7 @@ function createAdapter(): ChannelAdapter {
     }
   }
 
-  function parseAddress(raw: unknown): DeliveryAddress | null {
+  function parseAddress(raw: unknown): (DeliveryAddress & { instance?: string }) | null {
     if (!raw || typeof raw !== 'object') return null;
     const obj = raw as Record<string, unknown>;
     if (typeof obj.channelType !== 'string' || typeof obj.platformId !== 'string') return null;
@@ -260,10 +279,21 @@ function createAdapter(): ChannelAdapter {
         : typeof obj.threadId === 'string'
           ? obj.threadId
           : null;
+    // Anything that is not a registry key resolves as the default instance;
+    // fail closed, but loudly, so a typo in `to.instance` is visible in the log.
+    let instance: string | undefined;
+    if (typeof obj.instance === 'string') {
+      if (INSTANCE_KEY_RE.test(obj.instance)) {
+        instance = obj.instance;
+      } else {
+        log.warn('CLI: ignoring non-URL-safe to.instance, routing to the default instance', { instance: obj.instance });
+      }
+    }
     return {
       channelType: obj.channelType,
       platformId: obj.platformId,
       threadId,
+      instance,
     };
   }
 
@@ -279,4 +309,4 @@ function extractText(message: OutboundMessage): string | null {
   return null;
 }
 
-registerChannelAdapter('cli', { factory: createAdapter });
+registerChannelAdapter('cli', { factory: createAdapter, defaults: CLI_DEFAULTS });
