@@ -58,6 +58,25 @@ class CompleteTests(unittest.TestCase):
         self.assertEqual(run(["self-update"])[0], 1)
 
 
+EPIC_BOARD = {"version": 1, "updated": "x", "groups": [{"id": "g1", "title": "George's Projects", "outcomes": [
+    {"id": "o52", "kind": "epic", "title": "Outside", "outcomes": [
+        {"id": "o53", "title": "Solar / electrical", "items": [{"id": "c1", "type": "yellow", "text": "Circuit 1 labelled", "done": False}]}]}]}]}
+
+
+class EpicTests(unittest.TestCase):
+    """The board has epics (no 'items' key); every command must cope."""
+    def test_show_find_validate_and_add_under_an_epic(self):
+        import io, contextlib
+        for argv in (["show"], ["show", "--open-only"], ["find", "circuit"], ["validate"]):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc, _ = run(argv, EPIC_BOARD)
+            self.assertEqual(rc, 0, argv)
+        rc, data = run(["add-card", "o53", "result", "Circuit 2 labelled"], EPIC_BOARD)
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(data["groups"][0]["outcomes"][0]["outcomes"][0]["items"]), 2)
+
+
 class RemoteTests(unittest.TestCase):
     def fake(self, calls, put_code=200):
         import base64
