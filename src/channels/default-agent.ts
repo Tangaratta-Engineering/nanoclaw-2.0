@@ -141,7 +141,7 @@ registerMessageInterceptor(async (event) => {
   // Conversation continuity: an untagged message that follows the other agent's post is a reply to it.
   // (Threads are off, so this is what keeps a back-and-forth with Timmy going without re-tagging him.)
   const otherName = 'timmy';
-  const other = getMessagingGroupWithAgentCount(event.channelType, event.platformId, otherName);
+  const other = await getMessagingGroupWithAgentCount(event.channelType, event.platformId, otherName);
   if (other && other.agentCount > 0) {
     const recent = await recentChannelMessages(event.platformId, event.message.id);
     if (otherAgentHasFloor(recent, agentIds()[otherName] ?? [], Date.now())) {
@@ -150,7 +150,7 @@ registerMessageInterceptor(async (event) => {
     }
   }
   // Only chats that actually have an agent wired (no auto-creation for stray channels).
-  const found = getMessagingGroupWithAgentCount(event.channelType, event.platformId, DEFAULT_INSTANCE);
+  const found = await getMessagingGroupWithAgentCount(event.channelType, event.platformId, DEFAULT_INSTANCE);
   if (!found || found.agentCount === 0) return false;
   // Re-enter routing as a mention. The re-injected event is isMention=true, so this
   // interceptor passes on it and normal routing takes over.
