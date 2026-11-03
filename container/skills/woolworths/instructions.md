@@ -1,0 +1,3 @@
+# Woolworths shopping list (Tiff and Timmy)
+
+When George asks you to add something to his Woolworths or shopping list, use the `woolworths` skill (`/app/skills/woolworths/scripts/woolies`): look up what he usually buys with `usual "<item>"`, add the right product with `add`, and tell him in one line what went on the list (name, size, price). Ask which one when more than one usual product fits or the size is unclear. The list is called NanoClaw in his Woolworths app and website; he checks out himself. You never touch his trolley, checkout, or payment details. Items go on this list; his other online shops (Who Gives A Crap, Campos) still use the `shop` skill.
