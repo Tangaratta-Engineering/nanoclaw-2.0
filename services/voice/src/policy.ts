@@ -193,6 +193,7 @@ export function debounceFor(text: string): number {
   if (/(\.{2,}|…|[,;:\u2014-])["')]*$/.test(t)) return 4500;
   if (words.length <= 3) return 4000;
   if (OPEN_ENDINGS.has(last)) return 4500;
+  if (/\?["')]*$/.test(t) && words.length >= 4) return 1500; // a clear question: not much more is coming
   if (/[.?!]["')]*$/.test(t)) return words.length >= 25 ? 3000 : 2000;
   return 3500;
 }
@@ -226,4 +227,31 @@ export function addressees(text: string): AgentKey[] {
     if (agentKeyOf(last)) add(last);
   }
   return out;
+}
+
+/** A short thing to say while the agent is still working on an answer, so a long wait is not silence. */
+const FILLERS: Record<AgentKey, string[]> = {
+  tiff: ['One moment.', 'Let me check.', 'Just a sec.'],
+  jimmy: ['One moment.', 'Let me look into that.'],
+  jack: ['Let me look into that.', 'One moment.'],
+};
+export function fillerFor(key: AgentKey, n: number): string {
+  const list = FILLERS[key];
+  return list[Math.abs(n) % list.length];
+}
+
+/**
+ * George can end a message with a keyword ("... send that to Tiff, over") to have it sent at once instead of after
+ * the usual wait. Returns the text without the keyword when it is the last word and something real comes before it
+ * (two or more words), else null. Only the last word counts, so the word in the middle of a sentence is just a word.
+ */
+export function stripEndWord(text: string, word: string): string | null {
+  const w = word.trim().toLowerCase();
+  if (!w) return null;
+  const words = text.trim().split(/\s+/);
+  if (words.length < 3) return null; // at least two words before the keyword
+  const last = (words[words.length - 1] ?? '').toLowerCase().replace(/[^a-z']/g, '');
+  if (last !== w) return null;
+  const rest = words.slice(0, -1).join(' ').replace(/[\s,;:.\u2014-]+$/, '');
+  return rest.length ? rest : null;
 }

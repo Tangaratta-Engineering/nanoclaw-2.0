@@ -13,8 +13,8 @@ test('a finished sentence is sent after its wait, not before', () => {
   const { sent, gate } = setup();
   gate.transcribeStart(); gate.captureStart(); gate.captureEnd();
   gate.add('Can you check my calendar for today?'); gate.transcribeEnd();
-  mock.timers.tick(1900); assert.deepEqual(sent, []);
-  mock.timers.tick(200); assert.deepEqual(sent, ['Can you check my calendar for today?']);
+  mock.timers.tick(1400); assert.deepEqual(sent, []);
+  mock.timers.tick(200); assert.deepEqual(sent, ['Can you check my calendar for today?']); // a clear question waits 1.5 s
   mock.timers.reset();
 });
 
@@ -58,5 +58,13 @@ test('reset drops the buffer and a stuck capture counter', () => {
   gate.captureStart(); gate.reset();
   gate.transcribeStart(); gate.add('This is a complete sentence after the reset.'); gate.transcribeEnd();
   mock.timers.tick(2100); assert.deepEqual(sent, ['This is a complete sentence after the reset.']);
+  mock.timers.reset();
+});
+
+test('the end keyword sends at once instead of after the wait', () => {
+  const { sent, gate } = setup();
+  gate.transcribeStart(); gate.captureStart(); gate.captureEnd();
+  gate.add('Find me flights to Hobart', true); gate.transcribeEnd();
+  mock.timers.tick(5); assert.deepEqual(sent, ['Find me flights to Hobart']);
   mock.timers.reset();
 });
