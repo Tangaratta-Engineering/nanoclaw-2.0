@@ -25,7 +25,7 @@ import { durationSecs, rms, toMono16k } from './audio.ts';
 import { loadConfig } from './config.ts';
 import { OutboxWatcher } from './outbox.ts';
 import { AddresseeState, isForAgent } from './addressee.ts';
-import { splitForSpeech, fillerFor, addressees, isLeadIn, isNoise, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
+import { splitForSpeech, stripEndWord, fillerFor, addressees, isLeadIn, isNoise, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
 import { transcribe } from './stt.ts';
 import { SendGate } from './gate.ts';
 import { GoogleTtsWorker, Speaker, TtsWorker } from './tts.ts';
@@ -194,7 +194,9 @@ async function processUtterance(pcm: Buffer): Promise<void> {
     return;
   }
   lastClipEnd = clipEnded;
-  gate.add(text);
+  const ended = stripEndWord(text, cfg.endWord);
+  if (ended) log('end keyword: sending now');
+  gate.add(ended ?? text, ended !== null);
 }
 
 /** Send everything George said in one go once he has paused long enough. */

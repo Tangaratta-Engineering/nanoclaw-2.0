@@ -239,3 +239,19 @@ export function fillerFor(key: AgentKey, n: number): string {
   const list = FILLERS[key];
   return list[Math.abs(n) % list.length];
 }
+
+/**
+ * George can end a message with a keyword ("... send that to Tiff, over") to have it sent at once instead of after
+ * the usual wait. Returns the text without the keyword when it is the last word and something real comes before it
+ * (two or more words), else null. Only the last word counts, so the word in the middle of a sentence is just a word.
+ */
+export function stripEndWord(text: string, word: string): string | null {
+  const w = word.trim().toLowerCase();
+  if (!w) return null;
+  const words = text.trim().split(/\s+/);
+  if (words.length < 3) return null; // at least two words before the keyword
+  const last = (words[words.length - 1] ?? '').toLowerCase().replace(/[^a-z']/g, '');
+  if (last !== w) return null;
+  const rest = words.slice(0, -1).join(' ').replace(/[\s,;:.\u2014-]+$/, '');
+  return rest.length ? rest : null;
+}

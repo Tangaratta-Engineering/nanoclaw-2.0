@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { fillerFor, addressees, agentKeyOf, debounceFor, splitForSpeech, isForMe, isSleepCommand, lifecycleAction, isLeadIn, startsWithName, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
+import { stripEndWord, fillerFor, addressees, agentKeyOf, debounceFor, splitForSpeech, isForMe, isSleepCommand, lifecycleAction, isLeadIn, startsWithName, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
 
 test('stop words only when short', () => {
   for (const t of ['Stop.', 'Stop talking', 'Hold on', 'wait', 'OK stop!', 'Tiff, stop', 'Tiff, Tiff, stop, stop, stop, stop.', 'Stop stop stop', 'Tiff stop please', 'Stop, stop, be quiet', 'hey tiff hold on', 'Jimmy, Jimmy, stop stop']) assert.ok(isStopCommand(t), t);
@@ -127,4 +127,14 @@ test('fillerFor rotates through a short list per agent', () => {
   assert.equal(fillerFor('jack', 0), 'Let me look into that.');
   assert.notEqual(fillerFor('jimmy', 0), fillerFor('jimmy', 1));
   assert.ok(fillerFor('tiff', 99).length > 3);
+});
+
+test('stripEndWord: the keyword ends a message only as the last word of something real', () => {
+  assert.equal(stripEndWord('Can you find me flights to Hobart next month, over.', 'over'), 'Can you find me flights to Hobart next month');
+  assert.equal(stripEndWord('Research the cost of a telescope. Over', 'over'), 'Research the cost of a telescope');
+  assert.equal(stripEndWord('The game is over and we lost', 'over'), null); // mid-sentence
+  assert.equal(stripEndWord('Over', 'over'), null);
+  assert.equal(stripEndWord('It is over', 'over'), 'It is'); // two words before: allowed, harmless at the end of a clip
+  assert.equal(stripEndWord('Go over', 'over'), null); // too short to trust
+  assert.equal(stripEndWord('Can you find flights, over', ''), null); // disabled
 });

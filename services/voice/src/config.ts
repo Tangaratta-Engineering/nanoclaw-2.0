@@ -10,6 +10,8 @@ export interface Config {
   userId: string;
   /** Name used for the agent's voice and the spoken-call preamble. */
   agentName: string;
+  /** A word that, ending a message, sends it at once ("... over"). Empty = off. */
+  endWord: string;
   /** Which of the three agents this service speaks for (derived from the agent name). */
   agentKey: AgentKey;
   /** Shared file recording who George is talking to (all voice services use the same one). */
@@ -52,6 +54,7 @@ export function loadConfig(root = path.resolve(import.meta.dirname, '../../..'))
     channelId: need('VOICE_CHANNEL_ID'),
     userId: need('VOICE_USER_ID'),
     agentName: process.env.VOICE_AGENT_NAME || 'Tiff',
+    endWord: (process.env.VOICE_END_WORD ?? 'over').trim().toLowerCase(),
     agentKey: agentKeyOf(process.env.VOICE_AGENT_NAME || 'Tiff') ?? 'tiff',
     addresseeFile: process.env.VOICE_ADDRESSEE_FILE || path.join(process.env.HOME ?? '', 'projects/.nanoclaw-data/voice/addressee.json'),
     wakeNames: list(process.env.VOICE_WAKE_NAMES),

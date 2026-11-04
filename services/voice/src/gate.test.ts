@@ -60,3 +60,11 @@ test('reset drops the buffer and a stuck capture counter', () => {
   mock.timers.tick(2100); assert.deepEqual(sent, ['This is a complete sentence after the reset.']);
   mock.timers.reset();
 });
+
+test('the end keyword sends at once instead of after the wait', () => {
+  const { sent, gate } = setup();
+  gate.transcribeStart(); gate.captureStart(); gate.captureEnd();
+  gate.add('Find me flights to Hobart', true); gate.transcribeEnd();
+  mock.timers.tick(5); assert.deepEqual(sent, ['Find me flights to Hobart']);
+  mock.timers.reset();
+});
