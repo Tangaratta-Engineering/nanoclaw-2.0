@@ -67,6 +67,24 @@ export function isLeadIn(text: string): boolean {
 
 const GREETINGS = new Set(['hey', 'hi', 'hello', 'ok', 'okay', 'yo', 'oi', 'um', 'uh', 'so']);
 
+export type AgentKey = 'tiff' | 'jimmy' | 'jack';
+
+/** The words George uses for each agent (including what speech-to-text makes of them). */
+const AGENT_WORDS: Record<AgentKey, string[]> = {
+  tiff: ['tiff', 'tiffany'],
+  jimmy: ['jimmy', 'jimmie', 'jim', 'timmy', 'timmie', 'tim', 'timothy'],
+  jack: ['jack', 'jak', 'jacques'],
+};
+
+/** Which agent a name word refers to (repeated letters ignored), or null. */
+export function agentKeyOf(word: string): AgentKey | null {
+  const f = word.toLowerCase().replace(/(.)\1+/g, '$1');
+  for (const [key, words] of Object.entries(AGENT_WORDS) as [AgentKey, string[]][]) {
+    if (words.some((w) => w.replace(/(.)\1+/g, '$1') === f)) return key;
+  }
+  return null;
+}
+
 /** Every agent name George uses, so "Tiff, Timmy, your turn" is read as addressing both. */
 const AGENT_NAMES = ['tiff', 'tiffany', 'timmy', 'timmie', 'tim', 'jimmy', 'jimmie', 'jim', 'timothy', 'jack', 'jak', 'jacques'];
 const DEFAULT_AGENT_NAMES = ['tiff', 'tiffany'];
@@ -177,4 +195,35 @@ export function debounceFor(text: string): number {
   if (OPEN_ENDINGS.has(last)) return 4500;
   if (/[.?!]["')]*$/.test(t)) return words.length >= 25 ? 3000 : 2000;
   return 3500;
+}
+
+/**
+ * Who is this utterance addressed to? Names that open it ("Jack, ..." / "Hey Tiff, Jimmy, your turn"), else a name that
+ * closes a short one ("You still there, Jack?"). Anything else, including a name mentioned in the middle of a
+ * sentence ("I changed Jimmy's name"), is not an address and returns [].
+ */
+export function addressees(text: string): AgentKey[] {
+  const words = norm(text).split(' ').filter(Boolean);
+  const out: AgentKey[] = [];
+  const add = (w: string) => {
+    const k = agentKeyOf(w);
+    if (k && !out.includes(k)) out.push(k);
+  };
+  let greetings = 0;
+  let i = 0;
+  for (; i < Math.min(words.length, 7); i++) {
+    const w = words[i];
+    if (!out.length && GREETINGS.has(w) && greetings < 2) {
+      greetings++;
+      continue;
+    }
+    if (!agentKeyOf(w)) break;
+    add(w);
+  }
+  if (out.length) return out;
+  if (words.length >= 2 && words.length <= 12) {
+    const last = words[words.length - 1];
+    if (agentKeyOf(last)) add(last);
+  }
+  return out;
 }

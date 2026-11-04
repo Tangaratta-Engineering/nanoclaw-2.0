@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { debounceFor, splitForSpeech, isForMe, isSleepCommand, lifecycleAction, isLeadIn, startsWithName, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
+import { addressees, agentKeyOf, debounceFor, splitForSpeech, isForMe, isSleepCommand, lifecycleAction, isLeadIn, startsWithName, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
 
 test('stop words only when short', () => {
   for (const t of ['Stop.', 'Stop talking', 'Hold on', 'wait', 'OK stop!', 'Tiff, stop', 'Tiff, Tiff, stop, stop, stop, stop.', 'Stop stop stop', 'Tiff stop please', 'Stop, stop, be quiet', 'hey tiff hold on', 'Jimmy, Jimmy, stop stop']) assert.ok(isStopCommand(t), t);
@@ -95,4 +95,26 @@ test('debounce waits longer when the pause sounds unfinished', () => {
   assert.equal(debounceFor('I want to book the flights for the family to Rotorua for the trail race'), 3500);
   assert.equal(debounceFor(Array(26).fill('word').join(' ') + '.'), 3000);
   assert.equal(debounceFor('Yes.'), 4000);
+});
+
+test('addressees: names that open an utterance, or close a short one', () => {
+  assert.deepEqual(addressees('Jack, can you research Tasmania for me'), ['jack']);
+  assert.deepEqual(addressees('Hey Tiff, Timmmy, your turn'), ['tiff', 'jimmy']);
+  assert.deepEqual(addressees('You still there Jack?'), ['jack']);
+  assert.deepEqual(addressees('Can you go and look that up, Jimmy'), ['jimmy']);
+  assert.deepEqual(addressees('Okay Jimmie what do you think'), ['jimmy']);
+});
+
+test('addressees: a name inside a sentence is not an address', () => {
+  assert.deepEqual(addressees('So have we resolved the Timmie thing? Has Timmie got a voice yet? Or Jimmy? Sorry I keep calling him Timmie. It is Jimmy. Jimmy.'), []);
+  assert.deepEqual(addressees('I changed your name to Jimmy so do you respond to it'), []);
+  assert.deepEqual(addressees('What is on today'), []);
+  assert.deepEqual(addressees('Jack'), ['jack']);
+});
+
+test('agentKeyOf maps names and speech-to-text spellings', () => {
+  assert.equal(agentKeyOf('Timmmy'), 'jimmy');
+  assert.equal(agentKeyOf('Jacques'), 'jack');
+  assert.equal(agentKeyOf('Tiffany'), 'tiff');
+  assert.equal(agentKeyOf('banana'), null);
 });

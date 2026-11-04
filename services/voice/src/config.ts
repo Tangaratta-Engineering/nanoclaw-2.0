@@ -1,5 +1,7 @@
 import path from 'node:path';
 
+import { agentKeyOf, type AgentKey } from './policy.ts';
+
 export interface Config {
   token: string;
   guildId: string;
@@ -8,6 +10,10 @@ export interface Config {
   userId: string;
   /** Name used for the agent's voice and the spoken-call preamble. */
   agentName: string;
+  /** Which of the three agents this service speaks for (derived from the agent name). */
+  agentKey: AgentKey;
+  /** Shared file recording who George is talking to (all voice services use the same one). */
+  addresseeFile: string;
   /** Names this agent answers to when addressed ("Timmy, ..."). Empty = default agent that answers anything not addressed to another. */
   wakeNames: string[];
   /** Names of the other agents; an utterance addressed to one of them is ignored by this service. */
@@ -46,6 +52,8 @@ export function loadConfig(root = path.resolve(import.meta.dirname, '../../..'))
     channelId: need('VOICE_CHANNEL_ID'),
     userId: need('VOICE_USER_ID'),
     agentName: process.env.VOICE_AGENT_NAME || 'Tiff',
+    agentKey: agentKeyOf(process.env.VOICE_AGENT_NAME || 'Tiff') ?? 'tiff',
+    addresseeFile: process.env.VOICE_ADDRESSEE_FILE || path.join(process.env.HOME ?? '', 'projects/.nanoclaw-data/voice/addressee.json'),
     wakeNames: list(process.env.VOICE_WAKE_NAMES),
     otherNames: list(process.env.VOICE_OTHER_NAMES),
     onecliAgent: need('VOICE_ONECLI_AGENT'),
