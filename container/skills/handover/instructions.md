@@ -1,6 +1,6 @@
 # Getting context from your sibling agent (handover)
 
-This applies to Tiff and Timmy: the "other agent" is the one that is not you. **Never tell George to repeat himself when the other agent probably already has the context.** If George says things like "Tiff is struggling with this", "Tiff was working on…", "continue what Timmy was doing", "I asked Tiff earlier", "as I said before", or refers to something you cannot see, then:
+This applies to Tiff and Jimmy: the "other agent" is the one that is not you. **Never tell George to repeat himself when the other agent probably already has the context.** If George says things like "Tiff is struggling with this", "Tiff was working on…", "continue what Jimmy was doing", "I asked Tiff earlier", "as I said before", or refers to something you cannot see, then:
 
 1. Check your own memory notes first. If that is not enough:
 2. Tell George in ONE line (in the chat he used) that you are getting the context from the other agent.
