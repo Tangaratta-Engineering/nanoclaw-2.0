@@ -215,5 +215,33 @@ class SpeakLevel(unittest.TestCase):
         self.assertNotIn("google", [c[0] for c in calls])
 
 
+class WorkerProtocol(unittest.TestCase):
+    """google_server.handle: one JSON line out per request, with the shared counter."""
+
+    def test_success_and_error_lines(self):
+        import io, contextlib
+        spec2 = importlib.util.spec_from_file_location("google_server", os.path.join(HERE, "google_server.py"))
+        gs = importlib.util.module_from_spec(spec2)
+        spec2.loader.exec_module(gs)
+        usage = os.path.join(tempfile.mkdtemp(), "u.json")
+        orig = (g.synthesize, g.check_budget, g.record_usage)
+        counted = []
+        g.synthesize = lambda text, voice, out, **kw: open(out, "wb").write(b"OggS")
+        g.check_budget = lambda chars, *a, **k: None
+        g.record_usage = lambda chars, *a, **k: counted.append(chars)
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                gs.handle({"id": 1, "text": "Hello.", "out": os.path.join(os.path.dirname(usage), "o.ogg")}, "en-US-Chirp3-HD-Aoede")
+                g.synthesize = lambda *a, **k: (_ for _ in ()).throw(g.GoogleTtsError("quota exceeded (HTTP 429)"))
+                gs.handle({"id": 2, "text": "Again.", "out": "/tmp/x.ogg"}, "en-US-Chirp3-HD-Aoede")
+        finally:
+            g.synthesize, g.check_budget, g.record_usage = orig
+        lines = [json.loads(l) for l in buf.getvalue().splitlines()]
+        self.assertEqual(lines[0]["id"], 1); self.assertIn("path", lines[0])
+        self.assertEqual(lines[1]["id"], 2); self.assertIn("quota", lines[1]["error"])
+        self.assertEqual(counted, [6])  # only the successful request is counted
+
+
 if __name__ == "__main__":
     unittest.main()
