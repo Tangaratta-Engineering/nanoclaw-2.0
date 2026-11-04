@@ -15,3 +15,9 @@ describe('discord-timmy channel registration', () => {
     expect(names).toContain('discord-timmy');
   });
 });
+
+describe('discord-jack channel registration', () => {
+  it('registers discord-jack via the channel barrel (inert without a token)', () => {
+    expect(getRegisteredChannelNames()).toContain('discord-jack');
+  });
+});
