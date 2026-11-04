@@ -54,6 +54,13 @@ test('who answers: named agent only when addressed, default agent otherwise', ()
   assert.ok(isForMe('Tiff, what is on today', [], timmy));
   assert.ok(isForMe('What is on today', [], timmy));
   assert.ok(!isForMe('Timmy, plan Rotorua', [], timmy));
+  // several names at once, and a speech-to-text spelling with extra letters
+  assert.ok(isForMe('Tiff, Timmmy, your turn', timmy, []));
+  assert.ok(isForMe('Tiff, Timmy, your turn', [], timmy));
+  assert.ok(isForMe('Hey Tiff, Jimmie, what do you think', ['jimmie'], []));
+  // a name later in a sentence is not an address
+  assert.ok(!isForMe('Okay so we have got nothing from Timmie', timmy, []));
+  assert.ok(!isForMe('I changed your name to Jimmy so do you respond to Jimmy', timmy, []));
 });
 
 test('sleep commands are short and explicit', () => {
