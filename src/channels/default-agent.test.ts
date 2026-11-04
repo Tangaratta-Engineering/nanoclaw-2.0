@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { InboundEvent } from './adapter.js';
-import { addressedToOtherAgent, otherAgentHasFloor, qualifiesForDefaultAgent } from './default-agent.js';
+import { addressedToOtherAgent, floorHolder, otherAgentHasFloor, qualifiesForDefaultAgent } from './default-agent.js';
 
 function event(over: {
   text?: string;
@@ -121,5 +121,26 @@ describe('otherAgentHasFloor', () => {
     expect(otherAgentHasFloor([post('T1', true, 45)], timmy, now)).toBe(false);
     expect(otherAgentHasFloor([post('G', false, 1)], timmy, now)).toBe(false);
     expect(otherAgentHasFloor([], timmy, now)).toBe(false);
+  });
+});
+
+describe('floorHolder', () => {
+  const now = Date.parse('2026-11-04T10:30:00Z');
+  const ids = { discord: ['T0'], timmy: ['M1', 'MR'], jack: ['J1'] };
+  const post = (id: string, bot: boolean, min: number) => ({
+    author: { id, bot },
+    timestamp: new Date(now - min * 60_000).toISOString(),
+  });
+  it('names the other agent that spoke last, whichever one it is', () => {
+    expect(floorHolder([post('G', false, 1), post('J1', true, 3), post('M1', true, 9)], ids, 'discord', now)).toBe(
+      'jack',
+    );
+    expect(floorHolder([post('M1', true, 2)], ids, 'discord', now)).toBe('timmy');
+  });
+  it('is null when the default bot spoke last, the window passed, or nobody (bot) spoke', () => {
+    expect(floorHolder([post('T0', true, 1), post('J1', true, 3)], ids, 'discord', now)).toBeNull();
+    expect(floorHolder([post('J1', true, 45)], ids, 'discord', now)).toBeNull();
+    expect(floorHolder([post('G', false, 1)], ids, 'discord', now)).toBeNull();
+    expect(floorHolder([], ids, 'discord', now)).toBeNull();
   });
 });

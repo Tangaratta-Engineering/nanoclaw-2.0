@@ -10,5 +10,6 @@ import './cli.js';
 import './no-discord-threads.js'; // local customization — see docs/local-customizations.md
 import './discord.js';
 import './discord-timmy.js'; // local customization — see docs/local-customizations.md
+import './discord-jack.js'; // local customization — see docs/local-customizations.md
 import './default-agent.js'; // local customization — see docs/local-customizations.md
 import './telegram.js';
