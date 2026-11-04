@@ -193,6 +193,7 @@ export function debounceFor(text: string): number {
   if (/(\.{2,}|…|[,;:\u2014-])["')]*$/.test(t)) return 4500;
   if (words.length <= 3) return 4000;
   if (OPEN_ENDINGS.has(last)) return 4500;
+  if (/\?["')]*$/.test(t) && words.length >= 4) return 1500; // a clear question: not much more is coming
   if (/[.?!]["')]*$/.test(t)) return words.length >= 25 ? 3000 : 2000;
   return 3500;
 }
@@ -226,4 +227,15 @@ export function addressees(text: string): AgentKey[] {
     if (agentKeyOf(last)) add(last);
   }
   return out;
+}
+
+/** A short thing to say while the agent is still working on an answer, so a long wait is not silence. */
+const FILLERS: Record<AgentKey, string[]> = {
+  tiff: ['One moment.', 'Let me check.', 'Just a sec.'],
+  jimmy: ['One moment.', 'Let me look into that.'],
+  jack: ['Let me look into that.', 'One moment.'],
+};
+export function fillerFor(key: AgentKey, n: number): string {
+  const list = FILLERS[key];
+  return list[Math.abs(n) % list.length];
 }

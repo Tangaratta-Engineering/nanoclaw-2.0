@@ -13,8 +13,8 @@ test('a finished sentence is sent after its wait, not before', () => {
   const { sent, gate } = setup();
   gate.transcribeStart(); gate.captureStart(); gate.captureEnd();
   gate.add('Can you check my calendar for today?'); gate.transcribeEnd();
-  mock.timers.tick(1900); assert.deepEqual(sent, []);
-  mock.timers.tick(200); assert.deepEqual(sent, ['Can you check my calendar for today?']);
+  mock.timers.tick(1400); assert.deepEqual(sent, []);
+  mock.timers.tick(200); assert.deepEqual(sent, ['Can you check my calendar for today?']); // a clear question waits 1.5 s
   mock.timers.reset();
 });
 
