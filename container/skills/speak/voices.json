@@ -1,7 +1,7 @@
 {
   "default": "en_US-hfc_female-medium",
-  "Tiff": "en_US-hfc_female-medium",
-  "Timmy": "en_US-ryan-medium",
-  "Jimmy": "en_US-ryan-medium",
-  "Jack": "en_US-ryan-medium"
+  "Tiff": { "provider": "google", "voice": "en-US-Chirp3-HD-Aoede", "fallback": "en_US-hfc_female-medium" },
+  "Jimmy": { "provider": "google", "voice": "en-US-Chirp3-HD-Charon", "fallback": "en_US-ryan-medium" },
+  "Timmy": { "provider": "google", "voice": "en-US-Chirp3-HD-Charon", "fallback": "en_US-ryan-medium" },
+  "Jack": { "provider": "google", "voice": "en-US-Chirp3-HD-Fenrir", "fallback": "en_US-ryan-medium" }
 }

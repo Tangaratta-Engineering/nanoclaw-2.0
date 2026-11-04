@@ -7,10 +7,10 @@ When George sends you a **voice note** (an audio attachment) — or asks you to 
    ```bash
    /app/skills/speak/scripts/speak "<the spoken text>"
    ```
-   It prints JSON with a `path`.
+   It prints JSON with a `path`. If the JSON says `"fallback_used": true`, Google was unavailable and the local voice was used; the reply is still fine to send.
 3. **Send it** with `send_file`, giving that `path` and leaving `to` out so it goes to the same chat.
 4. **Send anything that doesn't belong in speech as a normal text message**: links, lists, prices, booking details, the transcript if it was uncertain. Never read links or long numbers aloud.
 
-Keep your own voice: Tiff warm and quick, Jimmy dry and exact. If `speak` says it isn't installed, reply in text and tell George to run `container/skills/speak/setup.sh` on the host. Run `/speak` (the skill) for options.
+Keep your own voice: Tiff warm and quick, Jimmy dry and exact, Jack thoughtful and measured. If `speak` says it isn't installed, reply in text and tell George to run `container/skills/speak/setup.sh` on the host. Run `/speak` (the skill) for options.
 
 **Never rely on an earlier failure.** Tools get fixed between conversations. If you remember `speak` failing before, run it again now; only say it doesn't work if it fails in this turn, and then quote the actual error text.
