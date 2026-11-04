@@ -92,3 +92,10 @@ Agents do **not** run `nanoclaw-agent:latest`. They run the per-install image `n
 6. Restart (`systemctl --user restart nanoclaw`) and verify: both Discord adapters start; an agent answers
    in its DM and, when @mentioned, in the server channel; agent-to-agent messaging still works.
 7. Update this file.
+
+## Update of 2026-11-04 (upstream v2026.10.0)
+
+- **Service name:** the host runs as the user unit `nanoclaw-v2-63d51d54` (the name `/update-nanoclaw` looks for); the old `nanoclaw.service` is disabled. The voice units order after it. Restart with `systemctl --user restart nanoclaw-v2-63d51d54`.
+- **Memory:** each group's `CLAUDE.local.md` was carried over verbatim into `groups/<folder>/instructions.prepend.md` (standing instructions; edit that file from now on) and the original kept in `groups/<folder>/.memory-migration-staging/`. Claude auto-memory notes were copied into `groups/<folder>/memory/memories/claude-auto-memory/`. Durable facts have not been re-organised into the OKF tree yet.
+- **OneCLI:** gateway pinned at 1.42.0 (`~/.onecli/.env` `ONECLI_VERSION`), CLI 2.2.5. Rollback image tag `ghcr.io/onecli/onecli:rollback` (1.33.0); backups `~/onecli-db-backup-*.sql`, `~/onecli-appdata-backup.tgz`.
+- **send_file/send_message need `to`:** the speak skill instructions were updated.

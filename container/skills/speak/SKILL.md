@@ -11,7 +11,7 @@ allowed-tools: Bash(/app/skills/speak/scripts/speak:*)
 # -> {"path": "/workspace/agent/voice-replies/reply-….ogg", "duration_secs": 9.4, "voice": "en-US-Chirp3-HD-Aoede", "provider": "google", "fallback_used": false, "chars": 118, "truncated": false}
 ```
 
-Then attach it: `send_file` with that `path` (leave `to` out to reply in the same chat).
+Then attach it: `send_file` with that `path` (`to` is required: use the destination of the chat you are replying in).
 
 ## How it works
 
