@@ -152,7 +152,7 @@ async function processUtterance(pcm: Buffer): Promise<void> {
     return;
   }
   if (asleep) return; // a clip captured just before "go to sleep" must not be acted on
-  if (isStopCommand(text)) {
+  if (isStopCommand(text, [...cfg.wakeNames, ...cfg.otherNames])) {
     log('stop command');
     stopSpeaking();
     return;
