@@ -6,12 +6,23 @@ const STOP_PHRASES = [
 
 const norm = (t: string) => t.toLowerCase().replace(/[^a-z\s']/g, ' ').replace(/\s+/g, ' ').trim();
 
-/** A short utterance that is (or starts with) a stop word. Longer sentences containing "stop" are not commands. */
-export function isStopCommand(text: string): boolean {
-  const n = norm(text);
-  if (!n) return false;
-  const words = n.split(' ');
-  if (words.length > 4) return false;
+const STOP_NAMES = ['tiff', 'tiffany', 'timmy', 'timmie', 'tim', 'jimmy', 'jimmie', 'jim', 'jack'];
+const STOP_FILLER = ['please', 'okay', 'ok', 'now', 'just', 'hey', 'hi', 'sorry', 'yeah', 'yes', 'no', 'right'];
+
+/**
+ * A short utterance that is (or starts with) a stop word. Longer sentences containing "stop" are not commands.
+ * Names ("Tiff, Tiff, stop"), filler ("stop, please") and repeats ("stop stop stop stop") are ignored first,
+ * because that is how people actually shout it at someone who keeps talking.
+ */
+export function isStopCommand(text: string, names: readonly string[] = []): boolean {
+  const drop = new Set([...STOP_NAMES, ...names.map((x) => x.toLowerCase()), ...STOP_FILLER]);
+  const collapsed: string[] = [];
+  for (const w of norm(text).split(' ')) {
+    if (!w || drop.has(w) || collapsed[collapsed.length - 1] === w) continue;
+    collapsed.push(w);
+  }
+  if (!collapsed.length || collapsed.length > 4) return false;
+  const n = collapsed.join(' ');
   return STOP_PHRASES.some((p) => n === p || n.startsWith(p + ' ') || n.endsWith(' ' + p));
 }
 

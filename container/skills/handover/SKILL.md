@@ -1,6 +1,6 @@
 ---
 name: handover
-description: Get or give working context between Tiff and Timmy instead of making George repeat himself. Use when George refers to something the other agent was doing, or when the other agent asks you for a handover.
+description: Get or give working context between Tiff and Jimmy instead of making George repeat himself. Use when George refers to something the other agent was doing, or when the other agent asks you for a handover.
 allowed-tools: Bash(/app/skills/handover/scripts/recent-context:*)
 ---
 
@@ -22,4 +22,4 @@ Facts, not a transcript: what George originally wanted, what was done, what fail
 
 ## Why
 
-George often asks Timmy when Tiff is struggling (and the other way round). The agent taking over should ask its sibling for the context, not ask George to explain it all again.
+George often asks Jimmy when Tiff is struggling (and the other way round). The agent taking over should ask its sibling for the context, not ask George to explain it all again.
