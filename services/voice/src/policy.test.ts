@@ -4,7 +4,8 @@ import { test } from 'node:test';
 import { debounceFor, splitForSpeech, isForMe, isSleepCommand, lifecycleAction, isLeadIn, startsWithName, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
 
 test('stop words only when short', () => {
-  for (const t of ['Stop.', 'Stop talking', 'Hold on', 'wait', 'OK stop!', 'Tiff, stop']) assert.ok(isStopCommand(t), t);
+  for (const t of ['Stop.', 'Stop talking', 'Hold on', 'wait', 'OK stop!', 'Tiff, stop', 'Tiff, Tiff, stop, stop, stop, stop.', 'Stop stop stop', 'Tiff stop please', 'Stop, stop, be quiet', 'hey tiff hold on']) assert.ok(isStopCommand(t), t);
+  for (const t of ['Tiff stop stop that is not what I asked for', 'stop by the shops on the way home please']) assert.ok(!isStopCommand(t), t);
   for (const t of ['Can you stop by the shops later', 'What time does the bus stop open', 'continue', '']) assert.ok(!isStopCommand(t), t);
 });
 
