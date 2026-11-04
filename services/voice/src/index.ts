@@ -25,7 +25,7 @@ import { durationSecs, rms, toMono16k } from './audio.ts';
 import { loadConfig } from './config.ts';
 import { OutboxWatcher } from './outbox.ts';
 import { AddresseeState, isForAgent } from './addressee.ts';
-import { splitForSpeech, addressees, isLeadIn, isNoise, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
+import { splitForSpeech, stripEndWord, fillerFor, addressees, isLeadIn, isNoise, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
 import { transcribe } from './stt.ts';
 import { SendGate } from './gate.ts';
 import { GoogleTtsWorker, Speaker, TtsWorker } from './tts.ts';
@@ -33,7 +33,8 @@ import { GoogleTtsWorker, Speaker, TtsWorker } from './tts.ts';
 const MIN_SECS = 0.5;
 const MIN_RMS = 0.005;
 const SILENCE_MS = 1300; // let a thought finish before cutting the clip
-const MAX_SPOKEN_PER_TURN = 1; // agent messages spoken per turn; the rest stay as text
+const MAX_SPOKEN_PER_TURN = 2; // agent messages spoken per turn (a quick acknowledgement, then the answer); the rest stay as text
+const FILLER_MS = Number(process.env.VOICE_FILLER_MS || '6000'); // say a short filler if the agent is silent this long
 const TURN_GAP_MS = 15_000; // a message this long after the last spoken one starts a new turn (e.g. a task result)
 
 const cfg = loadConfig();
@@ -55,10 +56,28 @@ let fullReadout = false;
 const PATIENCE = Number(process.env.VOICE_PATIENCE || '1'); // scale the waits: 0.7 = quicker, 1.5 = more patient
 const gate = new SendGate((said) => void flushUtterances(said), PATIENCE);
 const pending: string[] = []; // things George said while she was talking, sent when she finishes
+let fillerTimer: NodeJS.Timeout | null = null;
+let fillerCount = 0;
+const clearFiller = () => {
+  if (fillerTimer) clearTimeout(fillerTimer);
+  fillerTimer = null;
+};
+/** After a pause with no reply from the agent, say a short filler once, so a slow answer is not silence. */
+const armFiller = () => {
+  clearFiller();
+  fillerTimer = setTimeout(() => {
+    fillerTimer = null;
+    if (spokenThisTurn > 0 || busy()) return;
+    log('filler: the agent is taking a while');
+    speechQueue.push(fillerFor(cfg.agentKey, fillerCount++));
+    void drainSpeech();
+  }, FILLER_MS);
+};
 
 const busy = () => speaking || speechQueue.length > 0;
 
 function stopSpeaking(): void {
+  clearFiller();
   generation++;
   speechQueue.length = 0;
   pending.length = 0;
@@ -109,6 +128,7 @@ async function drainSpeech(): Promise<void> {
     outbox.arm(120_000);
     fullReadout = wantsFullReadout(said);
     spokenThisTurn = 0;
+    armFiller();
     void sendToAgent(cfg, said);
   }
 }
@@ -120,6 +140,7 @@ outbox.onText = (text) => {
   if (Date.now() - lastSpokenAt > TURN_GAP_MS) spokenThisTurn = 0;
   if (spokenThisTurn >= (fullReadout ? 4 : MAX_SPOKEN_PER_TURN)) return; // long replies live in the text chat
   spokenThisTurn++;
+  clearFiller();
   lastSpokenAt = Date.now();
   speechQueue.push(...splitForSpeech(fullReadout ? voiceSummary(text, 2400) : voiceSummary(text)));
   void drainSpeech();
@@ -173,7 +194,9 @@ async function processUtterance(pcm: Buffer): Promise<void> {
     return;
   }
   lastClipEnd = clipEnded;
-  gate.add(text);
+  const ended = stripEndWord(text, cfg.endWord);
+  if (ended) log('end keyword: sending now');
+  gate.add(ended ?? text, ended !== null);
 }
 
 /** Send everything George said in one go once he has paused long enough. */
@@ -187,6 +210,7 @@ async function flushUtterances(said: string): Promise<void> {
   turnStart = lastClipEnd;
   outbox.arm(120_000);
   log('→ agent:', said.slice(0, 160));
+  armFiller();
   if (!(await sendToAgent(cfg, said))) {
     speechQueue.push("I can't reach my brain right now. Try again in a moment.");
     void drainSpeech();

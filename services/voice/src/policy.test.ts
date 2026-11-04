@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { addressees, agentKeyOf, debounceFor, splitForSpeech, isForMe, isSleepCommand, lifecycleAction, isLeadIn, startsWithName, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
+import { stripEndWord, fillerFor, addressees, agentKeyOf, debounceFor, splitForSpeech, isForMe, isSleepCommand, lifecycleAction, isLeadIn, startsWithName, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
 
 test('stop words only when short', () => {
   for (const t of ['Stop.', 'Stop talking', 'Hold on', 'wait', 'OK stop!', 'Tiff, stop', 'Tiff, Tiff, stop, stop, stop, stop.', 'Stop stop stop', 'Tiff stop please', 'Stop, stop, be quiet', 'hey tiff hold on', 'Jimmy, Jimmy, stop stop']) assert.ok(isStopCommand(t), t);
@@ -86,7 +86,9 @@ test('speech is split so the first sentence can start early', () => {
 });
 
 test('debounce waits longer when the pause sounds unfinished', () => {
-  assert.equal(debounceFor('Can you check my calendar for today?'), 2000);
+  assert.equal(debounceFor('Can you check my calendar for today?'), 1500);
+  assert.equal(debounceFor('Is it going to rain?'), 1500);
+  assert.equal(debounceFor('Is it?'), 4000); // too short to be sure
   assert.equal(debounceFor('Right, now...'), 4500);
   assert.equal(debounceFor('Right, now'), 4000);
   assert.equal(debounceFor('So what I want to do is'), 4500);
@@ -117,4 +119,22 @@ test('agentKeyOf maps names and speech-to-text spellings', () => {
   assert.equal(agentKeyOf('Jacques'), 'jack');
   assert.equal(agentKeyOf('Tiffany'), 'tiff');
   assert.equal(agentKeyOf('banana'), null);
+});
+
+test('fillerFor rotates through a short list per agent', () => {
+  assert.equal(fillerFor('tiff', 0), 'One moment.');
+  assert.equal(fillerFor('tiff', 1), 'Let me check.');
+  assert.equal(fillerFor('jack', 0), 'Let me look into that.');
+  assert.notEqual(fillerFor('jimmy', 0), fillerFor('jimmy', 1));
+  assert.ok(fillerFor('tiff', 99).length > 3);
+});
+
+test('stripEndWord: the keyword ends a message only as the last word of something real', () => {
+  assert.equal(stripEndWord('Can you find me flights to Hobart next month, over.', 'over'), 'Can you find me flights to Hobart next month');
+  assert.equal(stripEndWord('Research the cost of a telescope. Over', 'over'), 'Research the cost of a telescope');
+  assert.equal(stripEndWord('The game is over and we lost', 'over'), null); // mid-sentence
+  assert.equal(stripEndWord('Over', 'over'), null);
+  assert.equal(stripEndWord('It is over', 'over'), 'It is'); // two words before: allowed, harmless at the end of a clip
+  assert.equal(stripEndWord('Go over', 'over'), null); // too short to trust
+  assert.equal(stripEndWord('Can you find flights, over', ''), null); // disabled
 });

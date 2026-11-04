@@ -40,10 +40,10 @@ export class SendGate {
     this.arm();
   }
 
-  /** A real transcript to send. */
-  add(text: string): void {
+  /** A real transcript to send. `sendNow` (George said the end keyword) skips the wait. */
+  add(text: string, sendNow = false): void {
     this.buf.push(text);
-    this.holdMs = debounceFor(text);
+    this.holdMs = sendNow ? 0 : debounceFor(text);
   }
 
   /** A filler or breath while composing a thought: keep waiting a bit longer. */
