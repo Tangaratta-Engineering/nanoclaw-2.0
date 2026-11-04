@@ -67,22 +67,51 @@ export function isLeadIn(text: string): boolean {
 
 const GREETINGS = new Set(['hey', 'hi', 'hello', 'ok', 'okay', 'yo', 'oi', 'um', 'uh', 'so']);
 
-/** True when the first few words of the utterance are one of `names` ("Hey Timmy, ..." / "Timmy: ..."). */
+/** Every agent name George uses, so "Tiff, Timmy, your turn" is read as addressing both. */
+const AGENT_NAMES = ['tiff', 'tiffany', 'timmy', 'timmie', 'tim', 'jimmy', 'jimmie', 'jim', 'timothy', 'jack', 'jak', 'jacques'];
+const DEFAULT_AGENT_NAMES = ['tiff', 'tiffany'];
+
+/** "timmmy" and "timmy" are the same word to speech-to-text. */
+const fold = (w: string) => w.replace(/(.)\1+/g, '$1');
+
+/**
+ * The agent names at the start of an utterance, folded: ("Hey Tiff, Timmy, ..." -> [tiff, timy]).
+ * Greetings are skipped only before the first name; the run stops at the first ordinary word.
+ */
+function leadingAddress(text: string, known: Set<string>): string[] {
+  const out: string[] = [];
+  let greetings = 0;
+  for (const w of norm(text).split(' ').filter(Boolean).slice(0, 7)) {
+    if (!out.length && GREETINGS.has(w) && greetings < 2) {
+      greetings++;
+      continue;
+    }
+    const f = fold(w);
+    if (!known.has(f)) break;
+    out.push(f);
+  }
+  return out;
+}
+
+/** True when one of `names` is among the names that open the utterance ("Hey Timmy, ..." / "Tiff, Timmy: ..."). */
 export function startsWithName(text: string, names: string[]): boolean {
   if (!names.length) return false;
-  const words = norm(text).split(' ').filter(Boolean);
-  let i = 0;
-  while (i < words.length && i < 2 && GREETINGS.has(words[i])) i++;
-  return words.slice(i, i + 1).some((w) => names.includes(w));
+  const mine = new Set(names.map(fold));
+  const run = leadingAddress(text, new Set([...AGENT_NAMES.map(fold), ...mine]));
+  return run.some((n) => mine.has(n));
 }
 
 /**
- * Should this service act on the utterance? A named agent answers only when addressed by name;
- * the default agent answers everything not addressed to another agent.
+ * Is this utterance for this agent? A named agent answers when its name opens the utterance (alone or among
+ * several: "Tiff, Timmy, your turn"). The default agent answers anything not addressed to another agent, and
+ * anything that includes its own name.
  */
 export function isForMe(text: string, wakeNames: string[], otherNames: string[]): boolean {
   if (wakeNames.length) return startsWithName(text, wakeNames);
-  return !startsWithName(text, otherNames);
+  const others = new Set(otherNames.map(fold));
+  const run = leadingAddress(text, new Set([...AGENT_NAMES.map(fold), ...others]));
+  if (run.some((n) => DEFAULT_AGENT_NAMES.map(fold).includes(n))) return true;
+  return !run.some((n) => others.has(n));
 }
 
 const SLEEP_PHRASES = ['go to sleep', 'sleep now', 'stop listening', 'mute', 'mute yourself', 'go quiet', 'hang up', 'goodnight'];
