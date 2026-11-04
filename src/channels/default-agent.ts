@@ -69,12 +69,15 @@ function agentIds(): AgentIds {
     'DISCORD_MENTION_ROLE_IDS',
     'DISCORD_TIMMY_APPLICATION_ID',
     'DISCORD_TIMMY_MENTION_ROLE_IDS',
+    'DISCORD_JACK_APPLICATION_ID',
+    'DISCORD_JACK_MENTION_ROLE_IDS',
   ]);
   const list = (app?: string, roles?: string) =>
     [app, ...(roles ?? '').split(',')].map((x) => (x ?? '').trim()).filter(Boolean);
   cachedIds = {
     discord: list(env.DISCORD_APPLICATION_ID, env.DISCORD_MENTION_ROLE_IDS),
     timmy: list(env.DISCORD_TIMMY_APPLICATION_ID, env.DISCORD_TIMMY_MENTION_ROLE_IDS),
+    jack: list(env.DISCORD_JACK_APPLICATION_ID, env.DISCORD_JACK_MENTION_ROLE_IDS),
   };
   return cachedIds;
 }
@@ -119,6 +122,26 @@ export function otherAgentHasFloor(
   return Number.isFinite(at) && now - at <= FLOOR_WINDOW_MS;
 }
 
+/**
+ * Which other agent (adapter instance) spoke last in the channel? Like otherAgentHasFloor, but for any number of
+ * other agents: returns the instance whose bot posted the newest bot message within the window, or null.
+ */
+export function floorHolder(
+  recent: Array<{ author?: { id?: string; bot?: boolean }; timestamp?: string }>,
+  idsByInstance: Record<string, string[]>,
+  exclude: string,
+  now: number,
+): string | null {
+  const lastBot = recent.find((m) => m.author?.bot === true);
+  if (!lastBot?.author?.id) return null;
+  const at = Date.parse(lastBot.timestamp ?? '');
+  if (!Number.isFinite(at) || now - at > FLOOR_WINDOW_MS) return null;
+  for (const [instance, ids] of Object.entries(idsByInstance)) {
+    if (instance !== exclude && ids.includes(lastBot.author.id)) return instance;
+  }
+  return null;
+}
+
 /** Newest-first recent messages of a Discord channel; [] on any failure (falls back to the default agent). */
 async function recentChannelMessages(platformId: string, beforeId?: string): Promise<any[]> {
   const channelId = platformId.split(':')[2];
@@ -138,14 +161,25 @@ async function recentChannelMessages(platformId: string, beforeId?: string): Pro
 registerMessageInterceptor(async (event) => {
   if (addressedToOtherAgent(event, agentIds())) return true; // not for this agent: consume it
   if (!qualifiesForDefaultAgent(event)) return false;
-  // Conversation continuity: an untagged message that follows the other agent's post is a reply to it.
-  // (Threads are off, so this is what keeps a back-and-forth with Timmy going without re-tagging him.)
-  const otherName = 'timmy';
-  const other = await getMessagingGroupWithAgentCount(event.channelType, event.platformId, otherName);
-  if (other && other.agentCount > 0) {
+  // Conversation continuity: an untagged message that follows another agent's post is a reply to it.
+  // (Threads are off, so this is what keeps a back-and-forth with Jimmy or Jack going without re-tagging.)
+  const ids = agentIds();
+  const wired: string[] = [];
+  for (const name of Object.keys(ids)) {
+    if (name === DEFAULT_INSTANCE) continue;
+    const g = await getMessagingGroupWithAgentCount(event.channelType, event.platformId, name);
+    if (g && g.agentCount > 0) wired.push(name);
+  }
+  if (wired.length > 0) {
     const recent = await recentChannelMessages(event.platformId, event.message.id);
-    if (otherAgentHasFloor(recent, agentIds()[otherName] ?? [], Date.now())) {
-      await routeInbound({ ...event, instance: otherName, message: { ...event.message, isMention: true } });
+    const holder = floorHolder(
+      recent,
+      Object.fromEntries(wired.map((n) => [n, ids[n] ?? []])),
+      DEFAULT_INSTANCE,
+      Date.now(),
+    );
+    if (holder) {
+      await routeInbound({ ...event, instance: holder, message: { ...event.message, isMention: true } });
       return true;
     }
   }

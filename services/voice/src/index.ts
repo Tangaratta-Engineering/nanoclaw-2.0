@@ -24,10 +24,11 @@ import { sendToAgent } from './agent.ts';
 import { durationSecs, rms, toMono16k } from './audio.ts';
 import { loadConfig } from './config.ts';
 import { OutboxWatcher } from './outbox.ts';
-import { splitForSpeech, isForMe, isLeadIn, isNoise, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
+import { AddresseeState, isForAgent } from './addressee.ts';
+import { splitForSpeech, addressees, isLeadIn, isNoise, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
 import { transcribe } from './stt.ts';
 import { SendGate } from './gate.ts';
-import { TtsWorker } from './tts.ts';
+import { GoogleTtsWorker, Speaker, TtsWorker } from './tts.ts';
 
 const MIN_SECS = 0.5;
 const MIN_RMS = 0.005;
@@ -41,7 +42,8 @@ const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
 const player = createAudioPlayer();
 const outbox = new OutboxWatcher(cfg.sessionsDir, cfg.dmPlatformId);
-const tts = new TtsWorker(cfg);
+const addressee = new AddresseeState(cfg.addresseeFile);
+const tts = new Speaker(new TtsWorker(cfg), cfg.googleVoice ? new GoogleTtsWorker(cfg) : null, Date.now, log);
 const speechQueue: string[] = [];
 let speaking = false;
 let generation = 0; // bumped on stop so in-flight synthesis is discarded
@@ -152,12 +154,12 @@ async function processUtterance(pcm: Buffer): Promise<void> {
     return;
   }
   if (asleep) return; // a clip captured just before "go to sleep" must not be acted on
-  if (isStopCommand(text)) {
+  if (isStopCommand(text, [...cfg.wakeNames, ...cfg.otherNames])) {
     log('stop command');
     stopSpeaking();
     return;
   }
-  if (!isForMe(text, cfg.wakeNames, cfg.otherNames)) {
+  if (!isForAgent(cfg.agentKey, addressees(text), addressee)) {
     log('not for me:', text.slice(0, 60));
     return;
   }
