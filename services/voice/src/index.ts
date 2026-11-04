@@ -27,7 +27,7 @@ import { OutboxWatcher } from './outbox.ts';
 import { splitForSpeech, isForMe, isLeadIn, isNoise, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
 import { transcribe } from './stt.ts';
 import { SendGate } from './gate.ts';
-import { TtsWorker } from './tts.ts';
+import { GoogleTtsWorker, Speaker, TtsWorker } from './tts.ts';
 
 const MIN_SECS = 0.5;
 const MIN_RMS = 0.005;
@@ -41,7 +41,7 @@ const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
 const player = createAudioPlayer();
 const outbox = new OutboxWatcher(cfg.sessionsDir, cfg.dmPlatformId);
-const tts = new TtsWorker(cfg);
+const tts = new Speaker(new TtsWorker(cfg), cfg.googleVoice ? new GoogleTtsWorker(cfg) : null, Date.now, log);
 const speechQueue: string[] = [];
 let speaking = false;
 let generation = 0; // bumped on stop so in-flight synthesis is discarded

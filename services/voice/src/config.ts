@@ -25,6 +25,10 @@ export interface Config {
   agentImage: string;
   voiceId: string;
   piperHome: string;
+  /** Google Chirp 3 HD voice for this agent (e.g. en-US-Chirp3-HD-Aoede). Unset = Piper only. Piper is always the fallback. */
+  googleVoice?: string;
+  /** Shared monthly character counter (the `speak` skill writes the same file from inside the agent containers). */
+  googleUsageFile: string;
 }
 
 function need(name: string): string {
@@ -53,5 +57,7 @@ export function loadConfig(root = path.resolve(import.meta.dirname, '../../..'))
     agentImage: need('VOICE_AGENT_IMAGE'),
     voiceId: process.env.VOICE_VOICE_ID || 'en_US-hfc_female-medium',
     piperHome: process.env.PIPER_HOME || path.join(process.env.HOME ?? '', 'projects/.nanoclaw-tools/piper'),
+    googleVoice: process.env.VOICE_GOOGLE_VOICE || undefined,
+    googleUsageFile: process.env.SPEAK_GOOGLE_USAGE || path.join(process.env.HOME ?? '', 'projects/.nanoclaw-data/voice/google-usage.json'),
   };
 }
