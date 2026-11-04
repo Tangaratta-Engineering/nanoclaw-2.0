@@ -6,7 +6,7 @@ const STOP_PHRASES = [
 
 const norm = (t: string) => t.toLowerCase().replace(/[^a-z\s']/g, ' ').replace(/\s+/g, ' ').trim();
 
-const STOP_NAMES = ['tiff', 'tiffany', 'timmy', 'timmie', 'tim', 'jack'];
+const STOP_NAMES = ['tiff', 'tiffany', 'timmy', 'timmie', 'tim', 'jimmy', 'jimmie', 'jim', 'jack'];
 const STOP_FILLER = ['please', 'okay', 'ok', 'now', 'just', 'hey', 'hi', 'sorry', 'yeah', 'yes', 'no', 'right'];
 
 /**
