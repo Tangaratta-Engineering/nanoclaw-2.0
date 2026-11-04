@@ -38,7 +38,7 @@ Do you have access to my email? ...
 | `--json` | Machine-readable: engine, language, duration, text, segments, quality, issues, agreement, alternative |
 | `--model tiny\|base\|small\|medium` | Local model only (default `small`; `medium` is more accurate but about 4–7× the audio length) |
 
-Names the family uses (Tiff, Timmy, George, Emily, Henry, Sophie, Turramurra…) are passed to the primary model as a hint — edit `vocabulary.txt` to change them.
+Names the family uses (Tiff, Jimmy, George, Emily, Henry, Sophie, Turramurra…) are passed to the primary model as a hint — edit `vocabulary.txt` to change them.
 
 ## Workflow
 
