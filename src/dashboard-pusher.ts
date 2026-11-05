@@ -121,89 +121,92 @@ function startLogTail(config: PusherConfig): void {
 }
 
 async function push(config: PusherConfig): Promise<void> {
-  const snapshot = collectSnapshot();
+  const snapshot = await collectSnapshot();
   postJson(config, '/api/ingest', snapshot);
   log.debug('Dashboard snapshot pushed');
 }
 
-function collectSnapshot(): Record<string, unknown> {
+async function collectSnapshot(): Promise<Record<string, unknown>> {
   return {
     timestamp: new Date().toISOString(),
     assistant_name: ASSISTANT_NAME,
     uptime: Math.floor(process.uptime()),
-    agent_groups: collectAgentGroups(),
-    sessions: collectSessions(),
-    channels: collectChannels(),
-    users: collectUsers(),
-    tokens: collectTokens(),
-    context_windows: collectContextWindows(),
+    agent_groups: await collectAgentGroups(),
+    sessions: await collectSessions(),
+    channels: await collectChannels(),
+    users: await collectUsers(),
+    tokens: await collectTokens(),
+    context_windows: await collectContextWindows(),
     activity: collectActivity(),
     messages: collectMessages(),
   };
 }
 
-function collectAgentGroups() {
-  return getAllAgentGroups().map((g) => {
-    const sessions = getSessionsByAgentGroup(g.id);
-    const running = sessions.filter((s) => s.container_status === 'running' || s.container_status === 'idle');
-    const destinations = getDestinations(g.id);
-    const members = getMembers(g.id).map((m: { user_id: string }) => {
-      const user = getUser(m.user_id);
-      return { ...m, display_name: user?.display_name ?? null };
-    });
-    const admins = getAdminsOfAgentGroup(g.id).map((a: { user_id: string }) => {
-      const user = getUser(a.user_id);
-      return { ...a, display_name: user?.display_name ?? null };
-    });
+async function collectAgentGroups() {
+  return Promise.all(
+    (await getAllAgentGroups()).map(async (g) => {
+      const sessions = await getSessionsByAgentGroup(g.id);
+      const running = sessions.filter((s) => s.container_status === 'running' || s.container_status === 'idle');
+      const destinations = await getDestinations(g.id);
+      const members = await Promise.all(
+        (await getMembers(g.id)).map(async (m: { user_id: string }) => {
+          const user = await getUser(m.user_id);
+          return { ...m, display_name: user?.display_name ?? null };
+        }),
+      );
+      const admins = await Promise.all(
+        (await getAdminsOfAgentGroup(g.id)).map(async (a: { user_id: string }) => {
+          const user = await getUser(a.user_id);
+          return { ...a, display_name: user?.display_name ?? null };
+        }),
+      );
 
-    // Wirings
-    const db = getDb();
-    const wirings = db
-      .prepare(
+      // Wirings
+      const db = getDb();
+      const wirings = await db.all<Record<string, unknown>>(
         `SELECT mga.*, mg.channel_type, mg.platform_id, mg.name as mg_name, mg.is_group, mg.unknown_sender_policy
          FROM messaging_group_agents mga
          JOIN messaging_groups mg ON mg.id = mga.messaging_group_id
          WHERE mga.agent_group_id = ?`,
-      )
-      .all(g.id) as Array<Record<string, unknown>>;
+        g.id,
+      );
 
-    const containerConfig = getContainerConfig(g.id);
+      const containerConfig = await getContainerConfig(g.id);
 
-    return {
-      id: g.id,
-      name: g.name,
-      folder: g.folder,
-      agent_provider: g.agent_provider,
-      container_config: containerConfig
-        ? { provider: containerConfig.provider, model: containerConfig.model, skills: containerConfig.skills }
-        : null,
-      sessionCount: sessions.length,
-      runningSessions: running.length,
-      wirings,
-      destinations,
-      members,
-      admins,
-      created_at: g.created_at,
-    };
-  });
+      return {
+        id: g.id,
+        name: g.name,
+        folder: g.folder,
+        agent_provider: g.agent_provider,
+        container_config: containerConfig
+          ? { provider: containerConfig.provider, model: containerConfig.model, skills: containerConfig.skills }
+          : null,
+        sessionCount: sessions.length,
+        runningSessions: running.length,
+        wirings,
+        destinations,
+        members,
+        admins,
+        created_at: g.created_at,
+      };
+    }),
+  );
 }
 
-function collectSessions() {
+async function collectSessions() {
   const db = getDb();
-  return db
-    .prepare(
-      `SELECT s.*, ag.name as agent_group_name, ag.folder as agent_group_folder,
+  return db.all<Record<string, unknown>>(
+    `SELECT s.*, ag.name as agent_group_name, ag.folder as agent_group_folder,
               mg.channel_type, mg.platform_id, mg.name as messaging_group_name
        FROM sessions s
        LEFT JOIN agent_groups ag ON ag.id = s.agent_group_id
        LEFT JOIN messaging_groups mg ON mg.id = s.messaging_group_id
        ORDER BY s.last_active DESC NULLS LAST`,
-    )
-    .all() as Array<Record<string, unknown>>;
+  );
 }
 
-function collectChannels() {
-  const messagingGroups = getAllMessagingGroups();
+async function collectChannels() {
+  const messagingGroups = await getAllMessagingGroups();
   const liveAdapters = getActiveAdapters().map((a) => a.channelType);
   const registeredChannels = getRegisteredChannelNames();
 
@@ -219,10 +222,12 @@ function collectChannels() {
       };
     }
 
-    const agents = getMessagingGroupAgents(mg.id).map((a) => {
-      const group = getAgentGroup(a.agent_group_id);
-      return { agent_group_id: a.agent_group_id, agent_group_name: group?.name ?? null, priority: a.priority };
-    });
+    const agents = await Promise.all(
+      (await getMessagingGroupAgents(mg.id)).map(async (a) => {
+        const group = await getAgentGroup(a.agent_group_id);
+        return { agent_group_id: a.agent_group_id, agent_group_name: group?.name ?? null, priority: a.priority };
+      }),
+    );
 
     byType[mg.channel_type].groups.push({
       messagingGroup: {
@@ -246,41 +251,42 @@ function collectChannels() {
   return Object.values(byType).sort((a, b) => a.channelType.localeCompare(b.channelType));
 }
 
-function collectUsers() {
-  return getAllUsers().map((u) => {
-    const roles = getUserRoles(u.id);
-    const dms = getUserDmsForUser(u.id);
+async function collectUsers() {
+  return Promise.all(
+    (await getAllUsers()).map(async (u) => {
+      const roles = await getUserRoles(u.id);
+      const dms = await getUserDmsForUser(u.id);
 
-    const db = getDb();
-    const memberships = db
-      .prepare(
+      const db = getDb();
+      const memberships = await db.all<Record<string, unknown>>(
         `SELECT agm.agent_group_id, ag.name as agent_group_name
          FROM agent_group_members agm
          JOIN agent_groups ag ON ag.id = agm.agent_group_id
          WHERE agm.user_id = ?`,
-      )
-      .all(u.id) as Array<Record<string, unknown>>;
+        u.id,
+      );
 
-    let privilege = 'none';
-    if (roles.some((r) => r.role === 'owner')) privilege = 'owner';
-    else if (roles.some((r) => r.role === 'admin' && !r.agent_group_id)) privilege = 'global_admin';
-    else if (roles.some((r) => r.role === 'admin')) privilege = 'admin';
-    else if (memberships.length > 0) privilege = 'member';
+      let privilege = 'none';
+      if (roles.some((r) => r.role === 'owner')) privilege = 'owner';
+      else if (roles.some((r) => r.role === 'admin' && !r.agent_group_id)) privilege = 'global_admin';
+      else if (roles.some((r) => r.role === 'admin')) privilege = 'admin';
+      else if (memberships.length > 0) privilege = 'member';
 
-    return {
-      id: u.id,
-      kind: u.kind,
-      display_name: u.display_name,
-      privilege,
-      roles,
-      memberships,
-      dmChannels: dms.map((d) => ({ channel_type: d.channel_type })),
-      created_at: u.created_at,
-    };
-  });
+      return {
+        id: u.id,
+        kind: u.kind,
+        display_name: u.display_name,
+        privilege,
+        roles,
+        memberships,
+        dmChannels: dms.map((d) => ({ channel_type: d.channel_type })),
+        created_at: u.created_at,
+      };
+    }),
+  );
 }
 
-function collectTokens() {
+async function collectTokens() {
   const sessionsDir = path.join(DATA_DIR, 'v2-sessions');
   const allEntries: Array<{
     model: string;
@@ -290,7 +296,7 @@ function collectTokens() {
     cacheCreationTokens: number;
     agentGroupId: string;
   }> = [];
-  const agentGroups = getAllAgentGroups();
+  const agentGroups = await getAllAgentGroups();
   const nameMap = new Map(agentGroups.map((g) => [g.id, g.name]));
 
   if (fs.existsSync(sessionsDir)) {
@@ -407,12 +413,12 @@ function scanJsonlTokens(agentDir: string) {
   return entries;
 }
 
-function collectContextWindows() {
+async function collectContextWindows() {
   const sessionsDir = path.join(DATA_DIR, 'v2-sessions');
   if (!fs.existsSync(sessionsDir)) return [];
 
   const results: unknown[] = [];
-  const agentGroups = getAllAgentGroups();
+  const agentGroups = await getAllAgentGroups();
   const nameMap = new Map(agentGroups.map((g) => [g.id, g.name]));
 
   for (const agDir of fs.readdirSync(sessionsDir).filter((d) => d.startsWith('ag-'))) {

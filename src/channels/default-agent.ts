@@ -184,7 +184,7 @@ registerMessageInterceptor(async (event) => {
     }
   }
   // Only chats that actually have an agent wired (no auto-creation for stray channels).
-  const found = getMessagingGroupWithAgentCount(event.channelType, event.platformId, DEFAULT_INSTANCE);
+  const found = await getMessagingGroupWithAgentCount(event.channelType, event.platformId, DEFAULT_INSTANCE);
   if (!found || found.agentCount === 0) return false;
   // Re-enter routing as a mention. The re-injected event is isMention=true, so this
   // interceptor passes on it and normal routing takes over.

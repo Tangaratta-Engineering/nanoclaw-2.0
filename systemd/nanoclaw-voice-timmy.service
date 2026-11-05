@@ -1,6 +1,6 @@
 [Unit]
 Description=NanoClaw live voice channel (Timmy)
-After=nanoclaw.service network-online.target
+After=nanoclaw-v2-63d51d54.service network-online.target
 Wants=network-online.target
 
 [Service]

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { stripEndWord, fillerFor, addressees, agentKeyOf, debounceFor, splitForSpeech, isForMe, isSleepCommand, lifecycleAction, isLeadIn, startsWithName, isNoise, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
+import { stripEndWord, fillerFor, addressees, agentKeyOf, debounceFor, splitForSpeech, isForMe, isSleepCommand, lifecycleAction, isLeadIn, startsWithName, isNoise, isPromptEcho, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
 
 test('stop words only when short', () => {
   for (const t of ['Stop.', 'Stop talking', 'Hold on', 'wait', 'OK stop!', 'Tiff, stop', 'Tiff, Tiff, stop, stop, stop, stop.', 'Stop stop stop', 'Tiff stop please', 'Stop, stop, be quiet', 'hey tiff hold on', 'Jimmy, Jimmy, stop stop']) assert.ok(isStopCommand(t), t);
@@ -137,4 +137,12 @@ test('stripEndWord: the keyword ends a message only as the last word of somethin
   assert.equal(stripEndWord('It is over', 'over'), 'It is'); // two words before: allowed, harmless at the end of a clip
   assert.equal(stripEndWord('Go over', 'over'), null); // too short to trust
   assert.equal(stripEndWord('Can you find flights, over', ''), null); // disabled
+});
+
+test('the name hint list echoed back is not speech', () => {
+  const vocab = 'Tiff, Timmy, George, Emily, Henry, Sophie, Turramurra, Sydney, NanoClaw';
+  assert.equal(isPromptEcho('Tiff, Timmy, George, Emily, Sophie, Turramurra, Sydney, NanoClaw', vocab), true);
+  assert.equal(isPromptEcho('Tiff, Jimmy and Jack', vocab), true);
+  assert.equal(isPromptEcho('Tiff, remind me to call Emily', vocab), false);
+  assert.equal(isPromptEcho('Tiff', vocab), false);
 });

@@ -39,6 +39,19 @@ export function isNoise(text: string, reliability: string, whileSpeaking: boolea
   return false;
 }
 
+/**
+ * Whisper is given a hint list of family and agent names; on a short noisy clip it echoes that list back ("Tiff, Timmy,
+ * George, Emily, Sophie, Turramurra, Sydney, NanoClaw") as if it had been said. A run of three or more words that
+ * are all names from the hint list (or agent names) is such an echo, never a request.
+ */
+export function isPromptEcho(text: string, vocabulary: string): boolean {
+  const known = new Set(
+    norm(vocabulary + ' tiff timmy timmie jimmy jack jackie george emily henry sophie turramurra sydney nanoclaw').split(' '),
+  );
+  const words = norm(text).split(' ').filter((w) => w && w !== 'and');
+  return words.length >= 3 && words.every((w) => known.has(w));
+}
+
 /** Speakable version of a reply: code spans removed; very long replies are cut at a sentence end (default ~1,600 characters, about 100 s of speech) with a pointer to the chat. */
 export function voiceSummary(text: string, max = 1600): string {
   // Code spans (file paths, commands) are not speakable: drop them.
