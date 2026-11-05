@@ -53,12 +53,26 @@ class T(unittest.TestCase):
         with self.assertRaises(P.PublishError):  # a code works once
             P.public_confirm(self.root, "trip", req["code"], api=api)
 
-    def test_zip_is_deterministic(self):
-        import time
+    def test_digest_depends_only_on_content(self):
         files = {"index.html": b"<h1>x</h1>", "a.css": b"b{}"}
-        first = P.make_zip(files)
-        time.sleep(2.1)
-        self.assertEqual(first, P.make_zip(files))
+        self.assertEqual(P.content_digest(files), P.content_digest(dict(reversed(list(files.items())))))
+        self.assertNotEqual(P.content_digest(files), P.content_digest({**files, "a.css": b"c{}"}))
+
+    def test_deploy_uploads_only_required_files_one_by_one(self):
+        P.put(self.root, "trip", self.src, "jack")
+        calls = []
+        def api(m, u, b=None, c="application/json"):
+            calls.append((m, u.split("/api/v1")[1], c))
+            if u.endswith("/sites"):
+                return {"id": "s1", "ssl_url": "https://x.netlify.app"}
+            if u.endswith("/deploys"):
+                return {"id": "d1", "required": [__import__("hashlib").sha1(b"<h1>Trip</h1>").hexdigest()]}
+            return {}
+        req = P.public_request(self.root, "trip")
+        P.public_confirm(self.root, "trip", req["code"], api=api)
+        self.assertEqual([c[0] for c in calls], ["POST", "POST", "PUT"])
+        self.assertEqual(calls[2][1], "/deploys/d1/files/index.html")
+        self.assertEqual(calls[2][2], "application/octet-stream")
 
     def test_changed_content_voids_the_code(self):
         P.put(self.root, "trip", self.src, "jack")
