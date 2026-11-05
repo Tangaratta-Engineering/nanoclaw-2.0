@@ -11,7 +11,8 @@ X=/app/skills/xlsx/scripts/xlsx
 $X build spec.json /workspace/agent/budget.xlsx    # new workbook from a JSON spec
 $X build data.csv  /workspace/agent/data.xlsx      # CSV -> formatted workbook
 $X inspect file.xlsx --rows 40                     # read what is in a workbook (formulas as written)
-$X check file.xlsx                                 # lint formulas and values (exit 1 if problems)
+$X recalc file.xlsx                                # compute every formula, store the results, then check (exit 1 if problems)
+$X check file.xlsx                                 # lint only (no calculation)
 ```
 
 Then send it with `send_file` (the `path`, and `to` set to the chat you are replying in). Say what is in it in a sentence or two; do not paste the whole table into chat.
@@ -40,16 +41,16 @@ Then send it with `send_file` (the `path`, and `to` set to the chat you are repl
 - **Put assumptions in the sheet.** Rates, growth, hours: one labelled cell each, referenced by formulas, and a `notes` line saying where each number came from (George said it, or the source). Never invent a figure; leave it blank and say so.
 - **Follow the request literally**: exact tab names, exact column headers, the formula he spelled out.
 - Sheet names with spaces must be quoted in formulas: `='Q1 Sales'!B2`. Use Excel-2007-era functions (`SUMIFS`, `INDEX`/`MATCH`, `IFERROR`, `SUMPRODUCT`). Avoid `XLOOKUP`, `FILTER`, `SORT`, `UNIQUE`, `SEQUENCE`: sort and filter in Python before writing. `TEXTJOIN`, `CONCAT`, `IFS`, `SWITCH`, `MAXIFS`, `MINIFS` need the `_xlfn.` prefix.
-- **Always run `check`** before sending and fix anything under `problems`. A clean check means no obvious breakage, not that the numbers are right: spot-check two or three formulas against a figure you can work out by hand.
+- **Always run `recalc`** on a workbook with formulas before sending and fix anything under `problems`. It stores the computed results in the file, so previews and phone apps show numbers. A clean result means nothing broke, not that the numbers are right: use `inspect` to read two or three results and compare them with a figure you can work out by hand.
 - **Editing George's own workbook**: copy it first (never overwrite the original), match its fonts, colours and layout, write only into the cells meant for input, and leave existing formulas alone. With openpyxl, open with `load_workbook(path)` (not `data_only=True`, which would turn every formula into a fixed number when saved) and add `keep_vba=True` for `.xlsm`.
 - A workbook for someone to fill in needs a short legend saying which cells to edit and one example row.
 - Money and personal records are private: save under `/workspace/agent/`, never publish a spreadsheet with the `publish` skill.
 
 ## Limits
 
-- No LibreOffice here, so formulas have **no stored results** until the file is opened in Excel, Google Sheets or a phone app. Chat and email previews may show formula cells blank. Tell George that once when you send a file with formulas; if he needs the numbers visible in a preview, also state the key results in your message.
-- `check` cannot compute formulas; it only finds structural problems.
-- For anything beyond the spec (charts, conditional formatting, data validation, multiple styles) write a short Python script with `openpyxl` and then run `check`:
+- `recalc` uses LibreOffice, which lacks some newer Excel functions; stick to the list above.
+- It rewrites the file in place; keep a copy first when editing George's own workbook.
+- For anything beyond the spec (charts, conditional formatting, data validation, multiple styles) write a short Python script with `openpyxl`, then run `recalc`:
   `import sys; sys.path.insert(0, "/workspace/projects/.nanoclaw-tools/xlsx/site"); import openpyxl`
 - 500,000 cells maximum per build.
 

@@ -136,7 +136,7 @@ def build(spec, out):
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     wb.save(out)
     return {"path": os.path.abspath(out), "sheets": wb.sheetnames, "cells": cells, "formulas": formulas,
-            "note": "formulas have no cached values until the file is opened in Excel/Sheets; previews may show them blank" if formulas else ""}
+            "note": "run recalc so the results are stored in the file" if formulas else ""}
 
 
 def formula_functions(f):
@@ -230,6 +230,34 @@ def to_csv_spec(path):
                         "columns": [{"header": h} for h in data[0]], "rows": [[num(c) for c in r] for r in data[1:]]}]}
 
 
+def recalc(path, timeout=90):
+    """Open the workbook in LibreOffice, compute every formula and store the results in the file (in place)."""
+    import glob
+    import shutil
+    import subprocess
+    import tempfile
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice:
+        raise XlsxError("LibreOffice is not in this image: the image needs rebuilding with libreoffice-calc")
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, "in", os.path.basename(path))
+        os.makedirs(os.path.dirname(src))
+        shutil.copy(path, src)
+        cmd = [soffice, f"-env:UserInstallation=file://{tmp}/profile", "--headless", "--norestore",
+               "--convert-to", "xlsx:Calc MS Excel 2007 XML", "--outdir", os.path.join(tmp, "out"), src]
+        try:
+            p = subprocess.run(cmd, capture_output=True, timeout=timeout, env={**os.environ, "HOME": tmp})
+        except subprocess.TimeoutExpired:
+            raise XlsxError(f"LibreOffice did not finish in {timeout}s")
+        made = glob.glob(os.path.join(tmp, "out", "*.xlsx"))
+        if p.returncode != 0 or not made:
+            raise XlsxError("LibreOffice failed: " + p.stderr.decode(errors="replace").strip()[:200])
+        shutil.copy(made[0], path)
+    res = check(path)
+    res["recalculated"] = True
+    return res
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Build, inspect and check .xlsx workbooks")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -238,6 +266,9 @@ def main(argv=None):
     b.add_argument("out", help="output .xlsx path")
     c = sub.add_parser("check", help="lint formulas and values in a workbook")
     c.add_argument("file")
+    r = sub.add_parser("recalc", help="compute all formulas with LibreOffice, store the results, then check")
+    r.add_argument("file")
+    r.add_argument("--timeout", type=int, default=90)
     i = sub.add_parser("inspect", help="show the cells of a workbook")
     i.add_argument("file")
     i.add_argument("--rows", type=int, default=20)
@@ -251,9 +282,9 @@ def main(argv=None):
         else:
             if not os.path.isfile(a.file):
                 raise XlsxError(f"no such file: {a.file}")
-            res = check(a.file) if a.cmd == "check" else inspect(a.file, a.rows)
+            res = check(a.file) if a.cmd == "check" else recalc(a.file, a.timeout) if a.cmd == "recalc" else inspect(a.file, a.rows)
             print(json.dumps(res, indent=2, default=str))
-            if a.cmd == "check" and not res["ok"]:
+            if a.cmd in ("check", "recalc") and not res["ok"]:
                 return 1
     except XlsxError as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
