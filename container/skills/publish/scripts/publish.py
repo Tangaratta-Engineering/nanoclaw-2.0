@@ -146,7 +146,11 @@ def make_zip(files):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for rel, data in sorted(files.items()):
-            z.writestr(rel, data)
+            # fixed timestamp: the same content must always give the same bytes (the confirmation code is tied to this digest)
+            info = zipfile.ZipInfo(rel, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            z.writestr(info, data)
     return buf.getvalue()
 
 

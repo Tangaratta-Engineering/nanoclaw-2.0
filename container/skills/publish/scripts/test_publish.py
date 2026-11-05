@@ -53,6 +53,13 @@ class T(unittest.TestCase):
         with self.assertRaises(P.PublishError):  # a code works once
             P.public_confirm(self.root, "trip", req["code"], api=api)
 
+    def test_zip_is_deterministic(self):
+        import time
+        files = {"index.html": b"<h1>x</h1>", "a.css": b"b{}"}
+        first = P.make_zip(files)
+        time.sleep(2.1)
+        self.assertEqual(first, P.make_zip(files))
+
     def test_changed_content_voids_the_code(self):
         P.put(self.root, "trip", self.src, "jack")
         req = P.public_request(self.root, "trip")
