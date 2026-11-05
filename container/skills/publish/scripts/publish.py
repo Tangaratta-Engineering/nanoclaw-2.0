@@ -6,7 +6,8 @@ Private (default): the page is copied into the shared pages folder that the home
 Public: `public NAME` previews, then `public NAME --confirm CODE` (after George says yes) uploads it to Netlify.
 Netlify's token is injected by the OneCLI gateway; this script never sees it.
 """
-import argparse, hashlib, io, json, os, re, secrets, subprocess, sys, time, zipfile
+import argparse, hashlib, json, os, re, secrets, subprocess, sys, time
+from urllib.parse import quote
 
 PAGES = os.environ.get("PUBLISH_DIR", "/workspace/projects/.nanoclaw-data/pages")
 PRIVATE_BASE = os.environ.get("PUBLISH_PRIVATE_BASE", "https://pages.home")
@@ -142,16 +143,12 @@ def scan(files):
     return {k: sorted(v)[:5] for k, v in found.items()}
 
 
-def make_zip(files):
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        for rel, data in sorted(files.items()):
-            # fixed timestamp: the same content must always give the same bytes (the confirmation code is tied to this digest)
-            info = zipfile.ZipInfo(rel, date_time=(1980, 1, 1, 0, 0, 0))
-            info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = 0o644 << 16
-            z.writestr(info, data)
-    return buf.getvalue()
+def content_digest(files):
+    """One fingerprint of the exact page content; the confirmation code is tied to it."""
+    h = hashlib.sha256()
+    for rel, data in sorted(files.items()):
+        h.update(rel.encode() + b"\0" + hashlib.sha256(data).digest())
+    return h.hexdigest()
 
 
 def http(method, url, body=None, ctype="application/json"):
@@ -176,7 +173,7 @@ def public_request(root, name, now=None):
     code = secrets.token_hex(3)
     now = now or time.time()
     meta["codes"] = {c: v for c, v in meta.get("codes", {}).items() if v["exp"] > now}
-    digest = hashlib.sha256(make_zip(files)).hexdigest()
+    digest = content_digest(files)
     meta["codes"][code] = {"name": name, "exp": now + CODE_TTL, "digest": digest}
     save_meta(root, meta)
     return {"name": name, "code": code, "files": sorted(files), "bytes": sum(len(v) for v in files.values()),
@@ -193,8 +190,7 @@ def public_confirm(root, name, code, now=None, api=http):
     if not c or c["name"] != name or c["exp"] < now:
         raise PublishError("that confirmation code is wrong or expired: run `public NAME` again and ask George again")
     files = collect(os.path.join(root, name))
-    blob = make_zip(files)
-    if hashlib.sha256(blob).hexdigest() != c["digest"]:
+    if content_digest(files) != c["digest"]:
         raise PublishError("the page changed after George was asked: run `public NAME` again")
     entry = meta["pages"][name]
     site = entry.get("netlify_id")
@@ -202,7 +198,13 @@ def public_confirm(root, name, code, now=None, api=http):
         s = api("POST", f"{NETLIFY}/sites", json.dumps({"name": f"gc-{name}-{secrets.token_hex(2)}"}).encode())
         site = entry["netlify_id"] = s["id"]
         entry["public_url"] = s.get("ssl_url") or s.get("url")
-    api("POST", f"{NETLIFY}/sites/{site}/deploys", blob, "application/zip")
+    # File-by-file deploy (what Netlify's own CLI does): a zip upload served the page at "/" as text/plain.
+    manifest = {"/" + rel: hashlib.sha1(data).hexdigest() for rel, data in files.items()}
+    dep = api("POST", f"{NETLIFY}/sites/{site}/deploys", json.dumps({"files": manifest}).encode())
+    need = set(dep.get("required") or [])
+    for rel, data in sorted(files.items()):
+        if hashlib.sha1(data).hexdigest() in need:
+            api("PUT", f"{NETLIFY}/deploys/{dep['id']}/files/{quote(rel)}", data, "application/octet-stream")
     del meta["codes"][code]
     entry["public_at"] = int(now)
     save_meta(root, meta)
