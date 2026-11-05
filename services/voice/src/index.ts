@@ -5,6 +5,7 @@
  *   → agent's short reply → Piper speech → played into the voice channel.
  */
 import fs from 'node:fs';
+import path from 'node:path';
 
 import {
   EndBehaviorType,
@@ -25,7 +26,8 @@ import { durationSecs, rms, toMono16k } from './audio.ts';
 import { loadConfig } from './config.ts';
 import { OutboxWatcher } from './outbox.ts';
 import { AddresseeState, isForAgent } from './addressee.ts';
-import { splitForSpeech, stripEndWord, fillerFor, addressees, isLeadIn, isNoise, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
+import { Floor } from './floor.ts';
+import { splitForSpeech, stripEndWord, fillerFor, addressees, isLeadIn, isNoise, isPromptEcho, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
 import { transcribe } from './stt.ts';
 import { SendGate } from './gate.ts';
 import { GoogleTtsWorker, Speaker, TtsWorker } from './tts.ts';
@@ -44,6 +46,14 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 const player = createAudioPlayer();
 const outbox = new OutboxWatcher(cfg.sessionsDir, cfg.dmPlatformId);
 const addressee = new AddresseeState(cfg.addresseeFile);
+const floor = new Floor(cfg.floorFile);
+const vocabulary = (() => {
+  try {
+    return fs.readFileSync(path.join(cfg.skillsDir, 'transcribe/vocabulary.txt'), 'utf8');
+  } catch {
+    return '';
+  }
+})();
 const tts = new Speaker(new TtsWorker(cfg), cfg.googleVoice ? new GoogleTtsWorker(cfg) : null, Date.now, log);
 const speechQueue: string[] = [];
 let speaking = false;
@@ -100,6 +110,7 @@ async function drainSpeech(): Promise<void> {
   if (speaking) return;
   speaking = true;
   try {
+    let floorHeld = false; // one agent speaks at a time across the three voice services
     let ahead: Synth | null = null; // the next chunk is synthesized while the current one plays
     while (speechQueue.length || ahead) {
       const cur: Synth = ahead ?? synth(speechQueue.shift()!);
@@ -110,16 +121,28 @@ async function drainSpeech(): Promise<void> {
         fs.rmSync(file, { force: true });
         continue;
       }
+      if (!floorHeld) {
+        const waitedFor = await floor.acquire(cfg.agentKey);
+        floorHeld = true;
+        if (waitedFor) log(`waited for ${waitedFor} to finish speaking`);
+        if (cur.gen !== generation) {
+          fs.rmSync(file, { force: true });
+          continue;
+        }
+      }
       if (turnStart) {
         log(`latency: ${Date.now() - turnStart} ms from the end of your sentence to the first sound`);
         turnStart = 0;
       }
       player.play(createAudioResource(fs.createReadStream(file), { inputType: StreamType.OggOpus }));
       await entersState(player, AudioPlayerStatus.Playing, 5_000).catch(() => {});
+      const beat = setInterval(() => floor.refresh(cfg.agentKey), 5_000);
       await entersState(player, AudioPlayerStatus.Idle, 120_000).catch(() => {});
+      clearInterval(beat);
       fs.rmSync(file, { force: true });
     }
   } finally {
+    floor.release(cfg.agentKey);
     speaking = false;
   }
   if (pending.length) {
@@ -162,6 +185,10 @@ async function processUtterance(pcm: Buffer): Promise<void> {
   const { text, reliability } = await transcribe(cfg, samples);
   const clipEnded = t0 - SILENCE_MS; // the clip is cut after this much silence
   log(`heard (${reliability}, ${Date.now() - t0}ms):`, text);
+  if (isPromptEcho(text, vocabulary)) {
+    log('ignored: the name hint list echoed back, not speech');
+    return;
+  }
   const wasBusy = busy();
   if (isSleepCommand(text)) {
     log('sleep command: no longer listening until George unmutes or rejoins');
