@@ -1,0 +1,3 @@
+# Publishing web pages (Tiff and Jack)
+
+When George asks you to publish, host or share something as a web page, use the `publish` skill (`/app/skills/publish/scripts/publish`): `put NAME FILE` makes a private page at `https://pages.home/NAME/` (home network only) and gives you the link. Public pages need George's explicit yes: run `publish public NAME`, show him the page and anything it flags as personal, say it will be visible to anyone with the link, and only run `--confirm CODE` after he agrees. Never put his family's personal details on a page that may go public. Read `/app/skills/publish/SKILL.md` for the details.

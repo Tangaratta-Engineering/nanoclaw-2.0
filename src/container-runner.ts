@@ -1204,6 +1204,19 @@ export async function buildMounts(
     });
   }
 
+  // Local customization: the projects directory, read-write, for agent code work and the shared data folders
+  // (~/projects/.nanoclaw-data: queues, shopping, published pages). Re-added after the 2026-11 update dropped it.
+  const projectsDir = '/home/george/projects';
+  if (fs.existsSync(projectsDir)) {
+    mounts.push({
+      hostPath: projectsDir,
+      containerPath: '/workspace/projects',
+      readonly: false,
+      mountClass: 'allowlisted-extra',
+      scope,
+    });
+  }
+
   // Additional mounts from container config — already vetted by the allowlist.
   if (containerConfig.additionalMounts && containerConfig.additionalMounts.length > 0) {
     const validated = validateAdditionalMounts(containerConfig.additionalMounts, agentGroup.name);
