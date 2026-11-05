@@ -27,6 +27,7 @@ import { loadConfig } from './config.ts';
 import { OutboxWatcher } from './outbox.ts';
 import { AddresseeState, isForAgent } from './addressee.ts';
 import { Floor } from './floor.ts';
+import { SpokenLog } from './echo.ts';
 import { splitForSpeech, stripEndWord, fillerFor, addressees, isLeadIn, isNoise, isPromptEcho, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
 import { transcribe } from './stt.ts';
 import { SendGate } from './gate.ts';
@@ -47,6 +48,7 @@ const player = createAudioPlayer();
 const outbox = new OutboxWatcher(cfg.sessionsDir, cfg.dmPlatformId);
 const addressee = new AddresseeState(cfg.addresseeFile);
 const floor = new Floor(cfg.floorFile);
+const spoken = new SpokenLog(cfg.spokenFile);
 const vocabulary = (() => {
   try {
     return fs.readFileSync(path.join(cfg.skillsDir, 'transcribe/vocabulary.txt'), 'utf8');
@@ -97,9 +99,11 @@ function stopSpeaking(): void {
 interface Synth {
   p: Promise<string | null>;
   gen: number;
+  text: string;
 }
 const synth = (text: string): Synth => ({
   gen: generation,
+  text,
   p: tts.synthesize(text).catch((e) => {
     log('tts failed', String(e).slice(0, 200));
     return null;
@@ -134,11 +138,13 @@ async function drainSpeech(): Promise<void> {
         log(`latency: ${Date.now() - turnStart} ms from the end of your sentence to the first sound`);
         turnStart = 0;
       }
+      const spokenId = spoken.record(cfg.agentKey, cur.text); // so no agent mistakes this, heard on George's speaker, for him
       player.play(createAudioResource(fs.createReadStream(file), { inputType: StreamType.OggOpus }));
       await entersState(player, AudioPlayerStatus.Playing, 5_000).catch(() => {});
       const beat = setInterval(() => floor.refresh(cfg.agentKey), 5_000);
       await entersState(player, AudioPlayerStatus.Idle, 120_000).catch(() => {});
       clearInterval(beat);
+      spoken.finish(spokenId);
       fs.rmSync(file, { force: true });
     }
   } finally {
@@ -187,6 +193,11 @@ async function processUtterance(pcm: Buffer): Promise<void> {
   log(`heard (${reliability}, ${Date.now() - t0}ms):`, text);
   if (isPromptEcho(text, vocabulary)) {
     log('ignored: the name hint list echoed back, not speech');
+    return;
+  }
+  const echoOf = spoken.echoOf(text);
+  if (echoOf) {
+    log(`ignored: that is ${echoOf} speaking, heard back through the microphone`);
     return;
   }
   const wasBusy = busy();
