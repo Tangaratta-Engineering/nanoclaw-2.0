@@ -1,0 +1,11 @@
+[Unit]
+Description=NanoClaw published pages (home network)
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/george/projects/nanoclaw-2.0/services/pages/server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
