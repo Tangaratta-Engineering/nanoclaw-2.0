@@ -6,6 +6,8 @@ allowed-tools: Bash(/app/skills/discord-history/scripts/discord-history:*)
 
 # #general history
 
+**Loading this skill does nothing by itself.** To read the history you must run the `discord-history` command below with the Bash tool. Never tell anyone "there are no messages" or "I can't find it" unless you ran the command in this turn and it printed that (`No messages found.`). If you did not run it, run it now.
+
 You only receive the messages addressed to you, and your own memory fades. Discord keeps everything, so look it up here instead of guessing or asking George to repeat himself.
 
 ```bash
