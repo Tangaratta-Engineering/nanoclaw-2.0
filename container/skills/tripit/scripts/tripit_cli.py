@@ -9,6 +9,7 @@ import urllib.request
 
 BASE = os.environ.get("TRIPIT_BRIDGE_URL", "http://192.168.3.13:8770/tripit")
 KINDS = ["trips", "hotels", "flights", "transport", "activities", "cars"]
+SINGULAR = {"trips": "trip", "hotels": "hotel", "flights": "flight", "transport": "transport", "activities": "activity", "cars": "car"}
 MAX_CHARS = 12_000
 TIMEOUT = 90
 
@@ -75,8 +76,10 @@ def when(o):
 def where(o):
     a = o.get("Address") or {}
     seg = listify(o.get("Segment"))
-    if seg:
-        return f'{seg[0].get("start_city_name") or ""} to {seg[-1].get("end_city_name") or ""}'.strip()
+    if seg:   # flights name cities, transport names places
+        a = first(seg[0], "start_city_name", "start_location_name") or ""
+        b = first(seg[-1], "end_city_name", "end_location_name") or ""
+        return f"{a} to {b}".strip()
     return first(o, "start_location_name") or ", ".join(x for x in (a.get("address"), a.get("city")) if x)
 
 
@@ -142,7 +145,7 @@ def main(argv=None, opener=urllib.request.urlopen):
             print(trip_summary(r) if a.kind == "trips" and not a.json else dump(r))
         elif a.cmd in ("create", "update"):
             r = call("POST", "/call", {"kind": a.kind, "verb": a.cmd, "data": parse_json(a.data)}, opener)["result"]
-            print(f"{a.cmd}d {a.kind[:-1] if a.kind.endswith('s') else a.kind}:")
+            print(f"{'created' if a.cmd == 'create' else 'updated'} {SINGULAR[a.kind]}:")
             print(dump(r))
         elif a.cmd == "delete":
             r = call("POST", "/delete/request", {"kind": a.kind, "id": a.id}, opener)

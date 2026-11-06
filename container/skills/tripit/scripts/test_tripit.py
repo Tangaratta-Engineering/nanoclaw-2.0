@@ -50,6 +50,11 @@ class T(unittest.TestCase):
         _, _, _, seen2 = self.run_cli(["update", "trips", "-"], {"/call": {"result": {}}}, stdin='{"id":"abc123","displayName":"X"}')
         self.assertEqual(seen2[0][2]["data"]["id"], "abc123")
 
+    def test_success_line_uses_the_right_singular(self):
+        for kind, word in (("activities", "activity"), ("transport", "transport"), ("hotels", "hotel"), ("trips", "trip")):
+            _, out, _, _ = self.run_cli(["create", kind, '{"tripId":"t"}'], {"/call": {"result": {}}})
+            self.assertTrue(out.startswith(f"created {word}:"), out)
+
     def test_bad_json_never_reaches_the_bridge(self):
         code, _, err, seen = self.run_cli(["create", "trips", "{nope"], {})
         self.assertEqual((code, seen), (2, []))
@@ -93,6 +98,10 @@ class T(unittest.TestCase):
         self.assertIn("flight | A1 | Flight | 2027-03-10 08:00 to 2027-03-10 13:30 | Sydney to Auckland", out)
         self.assertIn("hotel | H1 | Hotel | 2027-03-10 to 2027-03-12 | 1 Queen St, Auckland | conf C9", out)
         self.assertIn("activity | X1 | Sky Tower", out)
+        trip["TransportObject"] = {"uuid": "R1", "display_name": "Drive", "Segment": {"StartDateTime": {"date": "2027-03-10", "time": "09:00:00"}, "EndDateTime": {"date": "2027-03-10", "time": "12:30:00"},
+                                   "start_location_name": "Sydney (home)", "end_location_name": "The Sebel"}}
+        _, out2, _, _ = self.run_cli(["get", "trips", "T1"], {"/call": {"result": trip}})
+        self.assertIn("transport | R1 | Drive | 2027-03-10 09:00 to 2027-03-10 12:30 | Sydney (home) to The Sebel", out2)
         _, empty, _, _ = self.run_cli(["get", "trips", "T2"], {"/call": {"result": {"Trip": {"uuid": "T2", "display_name": "Empty"}}}})
         self.assertIn("(no bookings yet)", empty)
         _, raw, _, _ = self.run_cli(["get", "trips", "T1", "--json"], {"/call": {"result": trip}})
