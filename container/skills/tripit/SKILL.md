@@ -13,7 +13,7 @@ This is the agents' own TripIt account, not George's main one. George shares tri
 ```bash
 T=/app/skills/tripit/scripts/tripit
 $T trips [--past]                     # list trips: id | name | dates | location
-$T get trips <tripId>                 # one trip, with its bookings
+$T get trips <tripId>                 # one trip and its bookings, one line each (--json for the full record)
 $T get hotels|flights|transport|activities|cars <id>
 $T create trips '{"displayName":"New Zealand","startDate":"2027-01-04","endDate":"2027-01-20","primaryLocation":"Auckland"}'
 $T create hotels '{"tripId":"<tripId>","hotelName":"Airbnb Rotorua","checkInDate":"2027-01-10","checkInTime":"15:00","checkOutDate":"2027-01-13","checkOutTime":"10:00","city":"Rotorua","country":"NZ","timezone":"Pacific/Auckland"}'
@@ -35,6 +35,15 @@ Dates are `YYYY-MM-DD`, times `HH:MM` (24 hour), timezones like `Australia/Sydne
 - **transport** (car transfers, trains, ferries): `tripId`, `carrierName`, `confirmationNum`, `displayName`, `startDate`, `startTime`, `startAddress`, `startLocationName`, `endDate`, `endTime`, `endAddress`, `endLocationName`, `timezone`, `vehicleDescription`.
 - **activities**: `tripId`, `displayName`, `startDate`, `startTime`, `endDate`, `endTime`, `locationName`, `address`, `city`, `state`, `zip`, `country`, `timezone`.
 - **cars** (rentals): `tripId`, `supplierName`, `pickupDate`, `dropoffDate` (required); optional times, timezones, addresses, `supplierConfNum`, `carType`, `notes`, `totalCost`.
+
+## What to expect (checked against the live service)
+
+- Creating works for all six kinds, and an update changes only the fields you pass.
+- TripIt looks up addresses itself: a city, street or place name gets coordinates and a state. A `Warning` about addresses in the result is harmless.
+- A flight's `marketingAirline` can be a code (`NZ`): TripIt turns it into the airline's name.
+- Times are stored as given in the timezone you pass (`Pacific/Auckland`, `Australia/Sydney`).
+- Deleting a trip also removes its bookings. Deleting one booking leaves the trip.
+- In the raw record (`get ... --json`) bookings appear under `AirObject`, `LodgingObject`, `TransportObject`, `ActivityObject` and `CarObject`: one object when there is one, a list when there are several. The id is `uuid`.
 
 ## Workflow
 

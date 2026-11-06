@@ -57,6 +57,44 @@ def trips_summary(result):
     return f"{len(lines)} trip(s) (id | name | dates | location):\n" + "\n".join(lines)
 
 
+OBJECTS = [("AirObject", "flight"), ("LodgingObject", "hotel"), ("TransportObject", "transport"), ("ActivityObject", "activity"), ("CarObject", "car")]
+
+
+def listify(x):
+    return x if isinstance(x, list) else ([x] if isinstance(x, dict) else [])
+
+
+def when(o):
+    seg = listify(o.get("Segment"))
+    start = o.get("StartDateTime") or (seg[0].get("StartDateTime") if seg else None) or {}
+    end = o.get("EndDateTime") or (seg[-1].get("EndDateTime") if seg else None) or {}
+    f = lambda d: " ".join(x for x in (d.get("date"), (d.get("time") or "")[:5]) if x)
+    return f"{f(start)} to {f(end)}".strip()
+
+
+def where(o):
+    a = o.get("Address") or {}
+    seg = listify(o.get("Segment"))
+    if seg:
+        return f'{seg[0].get("start_city_name") or ""} to {seg[-1].get("end_city_name") or ""}'.strip()
+    return first(o, "start_location_name") or ", ".join(x for x in (a.get("address"), a.get("city")) if x)
+
+
+def trip_summary(result):
+    """A trip and its bookings, one line each (the raw record is long)."""
+    t = result.get("Trip") or {}
+    lines = [f'{first(t, "display_name")} | {first(t, "start_date")} to {first(t, "end_date")} | {first(t, "primary_location") or ""} | id {first(t, "uuid")}']
+    n = 0
+    for key, label in OBJECTS:
+        for o in listify(result.get(key)):
+            n += 1
+            lines.append(f'  {label} | {first(o, "uuid")} | {first(o, "display_name", "supplier_name") or "(no name)"} | {when(o)} | {where(o)}'
+                         + (f' | conf {o["supplier_conf_num"]}' if o.get("supplier_conf_num") else ""))
+    if not n:
+        lines.append("  (no bookings yet)")
+    return "\n".join(lines)
+
+
 def dump(obj):
     text = json.dumps(obj, indent=2, ensure_ascii=False)
     return text if len(text) <= MAX_CHARS else text[:MAX_CHARS] + "\n...(cut: ask for one object at a time)"
@@ -82,6 +120,7 @@ def main(argv=None, opener=urllib.request.urlopen):
     g = sub.add_parser("get", help="show one trip or booking")
     g.add_argument("kind", choices=KINDS)
     g.add_argument("id")
+    g.add_argument("--json", action="store_true", help="the full raw record")
     for name in ("create", "update"):
         c = sub.add_parser(name, help=f"{name} a trip or booking from JSON ('-' reads stdin)")
         c.add_argument("kind", choices=KINDS)
@@ -99,7 +138,8 @@ def main(argv=None, opener=urllib.request.urlopen):
             r = call("POST", "/call", {"kind": "trips", "verb": "list", "data": {"past": a.past}}, opener)["result"]
             print(dump(r) if a.json else trips_summary(r))
         elif a.cmd == "get":
-            print(dump(call("POST", "/call", {"kind": a.kind, "verb": "get", "id": a.id}, opener)["result"]))
+            r = call("POST", "/call", {"kind": a.kind, "verb": "get", "id": a.id}, opener)["result"]
+            print(trip_summary(r) if a.kind == "trips" and not a.json else dump(r))
         elif a.cmd in ("create", "update"):
             r = call("POST", "/call", {"kind": a.kind, "verb": a.cmd, "data": parse_json(a.data)}, opener)["result"]
             print(f"{a.cmd}d {a.kind[:-1] if a.kind.endswith('s') else a.kind}:")

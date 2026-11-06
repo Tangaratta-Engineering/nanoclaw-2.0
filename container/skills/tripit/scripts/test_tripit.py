@@ -81,6 +81,23 @@ class T(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("cannot reach", e.getvalue())
 
+    def test_trip_summary_lists_each_booking_in_one_line(self):
+        trip = {"Trip": {"uuid": "T1", "display_name": "NZ", "start_date": "2027-03-10", "end_date": "2027-03-12", "primary_location": "Auckland"},
+                "AirObject": {"uuid": "A1", "display_name": "Flight", "Segment": [{"StartDateTime": {"date": "2027-03-10", "time": "08:00:00"}, "EndDateTime": {"date": "2027-03-10", "time": "13:30:00"},
+                              "start_city_name": "Sydney", "end_city_name": "Auckland"}]},
+                "LodgingObject": [{"uuid": "H1", "display_name": "Hotel", "supplier_conf_num": "C9", "StartDateTime": {"date": "2027-03-10"}, "EndDateTime": {"date": "2027-03-12"},
+                                   "Address": {"address": "1 Queen St", "city": "Auckland"}}],
+                "ActivityObject": {"uuid": "X1", "display_name": "Sky Tower", "StartDateTime": {"date": "2027-03-11", "time": "10:00:00"}}}
+        code, out, _, _ = self.run_cli(["get", "trips", "T1"], {"/call": {"result": trip}})
+        self.assertIn("NZ | 2027-03-10 to 2027-03-12 | Auckland | id T1", out)
+        self.assertIn("flight | A1 | Flight | 2027-03-10 08:00 to 2027-03-10 13:30 | Sydney to Auckland", out)
+        self.assertIn("hotel | H1 | Hotel | 2027-03-10 to 2027-03-12 | 1 Queen St, Auckland | conf C9", out)
+        self.assertIn("activity | X1 | Sky Tower", out)
+        _, empty, _, _ = self.run_cli(["get", "trips", "T2"], {"/call": {"result": {"Trip": {"uuid": "T2", "display_name": "Empty"}}}})
+        self.assertIn("(no bookings yet)", empty)
+        _, raw, _, _ = self.run_cli(["get", "trips", "T1", "--json"], {"/call": {"result": trip}})
+        self.assertIn('"AirObject"', raw)
+
     def test_changes_listing(self):
         code, out, _, _ = self.run_cli(["changes"], {"/changes": {"changes": [{"at": "2026-11-07T01:00:00Z", "verb": "create", "kind": "trips", "label": "NZ"}]}})
         self.assertIn("2026-11-07T01:00 create trips NZ", out)
