@@ -98,6 +98,19 @@ class T(unittest.TestCase):
         _, raw, _, _ = self.run_cli(["get", "trips", "T1", "--json"], {"/call": {"result": trip}})
         self.assertIn('"AirObject"', raw)
 
+    def test_existing_trips_need_george_and_the_message_says_so(self):
+        code, _, err, _ = self.run_cli(["update", "trips", '{"id":"abcdef"}'], {"/call": (403, "That trip was not created by the agents, so it is read-only for them.")})
+        self.assertEqual(code, 2)
+        self.assertIn("read-only", err)
+        self.assertNotIn("OneCLI", err)                          # a refusal about the trip is not a missing key
+        req = {"code": "9F8E7D", "expiresInMinutes": 30, "preview": {"Trip": {"uuid": "T1", "display_name": "Bali", "start_date": "2027-06-01", "end_date": "2027-06-10"}}}
+        code, out, _, seen = self.run_cli(["adopt", "T1"], {"/adopt/request": req})
+        self.assertIn("NOT ALLOWED YET", out)
+        self.assertIn("Bali | 2027-06-01 to 2027-06-10", out)
+        self.assertIn("adopt-confirm 9F8E7D", out)
+        code, out, _, _ = self.run_cli(["adopt-confirm", "9F8E7D"], {"/adopt/confirm": {"adopted": True, "id": "T1"}})
+        self.assertIn("you may now change trip T1", out)
+
     def test_changes_listing(self):
         code, out, _, _ = self.run_cli(["changes"], {"/changes": {"changes": [{"at": "2026-11-07T01:00:00Z", "verb": "create", "kind": "trips", "label": "NZ"}]}})
         self.assertIn("2026-11-07T01:00 create trips NZ", out)

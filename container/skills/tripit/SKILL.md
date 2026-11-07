@@ -8,7 +8,9 @@ allowed-tools: Bash(/app/skills/tripit/scripts/tripit:*)
 
 TripIt holds the **confirmed** itinerary (flights, hotels, transport, activities with times). Use the `trip-planner` workbook for working out options; put things into TripIt once George has decided.
 
-This is the agents' own TripIt account, not George's main one. George shares trips from it with his own account, so the changes you make show up for him and Emily.
+This is **George's own TripIt account**. Anything you create is simply in his TripIt, so he and Emily see it with no sharing step.
+
+**You can read everything but change only what you created.** Trips and bookings that were already there are read-only for you. To change or delete one of those, run `tripit adopt <tripId>`, tell George which trip and exactly what you want to change, and wait for his yes before `tripit adopt-confirm <code>`. Trips you create yourself need no approval, except deleting (see below).
 
 ```bash
 T=/app/skills/tripit/scripts/tripit
@@ -20,6 +22,8 @@ $T create hotels '{"tripId":"<tripId>","hotelName":"Airbnb Rotorua","checkInDate
 $T update hotels '{"id":"<hotelId>","displayName":"Airbnb (booked)"}'     # only the fields you give change
 $T delete activities <id>             # does NOT delete: shows what would go, plus a code
 $T delete-confirm <code>              # only after George said yes to that exact deletion
+$T adopt <tripId>                     # an existing trip of George's: shows it and a code; changes stay blocked until he says yes
+$T adopt-confirm <code>               # only after George said yes to changing that trip
 $T changes                            # what the agents have changed lately
 ```
 
@@ -47,7 +51,7 @@ Dates are `YYYY-MM-DD`, times `HH:MM` (24 hour), timezones like `Australia/Sydne
 
 ## Workflow
 
-1. Find the trip: `trips`. Create it only if it is not there. Never create a second trip for the same dates and place.
+1. Find the trip: `trips` (this lists all of George's trips). If the trip is already there and it is his, do not create a second one: use `adopt` as above before changing it. Create a new trip only if it is not there. Never create a second trip for the same dates and place.
 2. Before adding a booking, `get trips <id>` and check it is not already in. Add each flight, hotel, transport and activity once, with `tripId`.
 3. Unconfirmed ideas are not bookings. Put only things George has decided; mark a maybe as an activity named `(maybe) ...` only if he asked for that.
 4. Tell George what you added or changed, briefly, with the dates. Updating changes only the fields you pass.
