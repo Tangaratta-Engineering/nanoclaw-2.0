@@ -29,7 +29,7 @@ def call(method, path, body=None, opener=urllib.request.urlopen):
             detail = json.loads(e.read() or b"{}").get("detail", "")
         except Exception:
             detail = ""
-        if e.code == 403:
+        if e.code == 403 and (not detail or detail == "Invalid API key"):
             raise BridgeError("the TripIt bridge refused the request (no key was added). Tell George the TripIt secret is missing or not assigned in OneCLI")
         raise BridgeError(detail or f"the TripIt bridge answered HTTP {e.code}")
     except (urllib.error.URLError, TimeoutError, OSError) as e:
@@ -128,6 +128,10 @@ def main(argv=None, opener=urllib.request.urlopen):
     d = sub.add_parser("delete", help="ask to delete: prints what would go and a code for George's yes")
     d.add_argument("kind", choices=KINDS)
     d.add_argument("id")
+    ad = sub.add_parser("adopt", help="ask to change one of George's existing trips: prints the trip and a code for his yes")
+    ad.add_argument("trip_id")
+    ac = sub.add_parser("adopt-confirm", help="allow changes to that existing trip, after George said yes, using the code")
+    ac.add_argument("code")
     dc = sub.add_parser("delete-confirm", help="delete, after George said yes, using the code")
     dc.add_argument("code")
     ch = sub.add_parser("changes", help="what the agents changed recently")
@@ -149,6 +153,14 @@ def main(argv=None, opener=urllib.request.urlopen):
             print("NOT DELETED YET. This is what would be deleted:")
             print(dump(r["preview"]))
             print(f'\nShow George exactly this and ask for his yes. If he says yes, run: tripit delete-confirm {r["code"]}  (code valid {r["expiresInMinutes"]:.0f} minutes)')
+        elif a.cmd == "adopt":
+            r = call("POST", "/adopt/request", {"tripId": a.trip_id}, opener)
+            print("NOT ALLOWED YET. This is one of George's existing trips:")
+            print(trip_summary(r["preview"]))
+            print(f'\nTell George which trip and exactly what you want to change, and ask for his yes. If he says yes, run: tripit adopt-confirm {r["code"]}  (code valid {r["expiresInMinutes"]:.0f} minutes)')
+        elif a.cmd == "adopt-confirm":
+            r = call("POST", "/adopt/confirm", {"code": a.code}, opener)
+            print(f'you may now change trip {r["id"]}')
         elif a.cmd == "delete-confirm":
             r = call("POST", "/delete/confirm", {"code": a.code}, opener)
             print(f'deleted {r["kind"]} {r["id"]}')
