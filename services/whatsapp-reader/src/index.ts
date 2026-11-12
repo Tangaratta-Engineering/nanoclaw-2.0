@@ -67,6 +67,7 @@ async function connect(): Promise<void> {
   };
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    log(`received ${messages.length} message(s) (${type})`); // counts only, never content
     if (type !== 'notify' && type !== 'append') return;
     for (const msg of messages) {
       try {
@@ -101,7 +102,7 @@ const server = http.createServer((req, res) => {
     } catch {
       /* ignore */
     }
-    const out = handle(store, req.method ?? 'GET', new URL(req.url ?? '/', 'http://x'), body, req.headers['x-api-key'] as string | undefined, cfg.apiKey, () => connected);
+    const out = handle(store, req.method ?? 'GET', new URL(req.url ?? '/', 'http://x'), body, req.headers['x-api-key'] as string | undefined, cfg.apiKey, () => connected, () => loadAllowlist(cfg.allowlistPath));
     res.writeHead(out.status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(out.body));
   });

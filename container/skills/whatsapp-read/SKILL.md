@@ -20,7 +20,7 @@ Only the chats George allow-listed are stored (group chats, plus one-to-one chat
 ## Scheduled check: tell George only what matters
 
 1. Run `$W new`. If it says "No new messages", stop: send nothing.
-2. Decide what is **important** to a parent of children at the school:
+2. First read `/workspace/projects/.nanoclaw-data/whatsapp/watch.md` if it exists: George's own watch list (his children's names, the groups to watch hardest, what he always wants to hear). Anything it lists is important. Then decide what else is **important** to a parent of children at the school:
    - a date, time, venue or deadline for something he must do or attend (excursions, forms, photo day, pick-up changes, meetings, working bees, events);
    - a cancellation, postponement, closure or schedule change;
    - illness or safety alerts that touch his children's class (e.g. head lice, outbreaks, an incident), lost property of his children;
