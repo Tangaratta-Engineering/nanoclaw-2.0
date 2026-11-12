@@ -21,6 +21,7 @@ $D/events.csv                                 # the events calendar
 |---|---|
 | Find P&C emails | `/app/skills/inbox-triage/scripts/inbox-mail search 'subject:("P&C" OR "parents and carers") newer_than:30d'` (Gmail search syntax; whole mailbox) |
 | Read a thread properly | `inbox-mail read <message id> --pdf` (includes PDF attachments such as minutes) |
+| A PDF (minutes, agenda, flyer, budget) | `P=/app/skills/pdf/scripts/pdf-text`: `$P --gmail <message id> --name minutes` (an email attachment), `$P https://… --pages 1-3` (a link), `$P /workspace/inbox/<id>/file.pdf` (a file George sent in chat). Add `--layout` for tables and budgets; long files print 20,000 characters at a time, read the rest with `--pages` |
 | George's calendar | `/app/skills/inbox-triage/scripts/inbox-calendar week` / `find --query "P&C"` |
 | School term dates and events | `/app/skills/school-posts/scripts/school-posts events upcoming --days 60` and `events search "<words>"` |
 | A reply draft | `/app/skills/inbox-triage/scripts/inbox-draft create --thread <id> --body-file f.txt`, then `card`, then wait for George |
@@ -42,7 +43,7 @@ There is no tool here that labels or archives Gmail: do not claim to have filed 
 Run when he says "sync", "catch up", "what's new with the P&C", or before meeting prep. Search since the last sync date recorded at the top of the knowledge base:
 - `subject:("P&C" OR "P and C" OR "parents and carers")`, `"NMS P&C"` (minutes, calendar notices), threads with the Members list, and `from:northsidemontessori.nsw.edu.au` about P&C, events, volunteers, fundraising or P&C reimbursements.
 
-Do not include: class, band, excursion or absence emails about his own children, fee invoices, OOSH, newsletters (a newsletter's P&C section is fine to extract), marketing. Read each thread in full, then record decisions, action items (who / what / by when), event updates, dates, budget figures, new people and open questions, each with a source line (date, sender, subject). Update the events file for any event change, summarise attached minutes into the Meetings log, and write the sync date at the top.
+Do not include: class, band, excursion or absence emails about his own children, fee invoices, OOSH, newsletters (a newsletter's P&C section is fine to extract), marketing. Read each thread in full, and read every PDF attached to it (minutes, agendas, budgets, flyers) with `pdf-text` or `inbox-mail read <id> --pdf`: the decisions are usually in the attachment, not the email. A PDF that prints `NO TEXT LAYER` is a scan: open it with the Read tool and read the pages as images, and tell George you did. Never say a thread has minutes or an agenda attached without having read it; if one cannot be opened, say so. Then record decisions, action items (who / what / by when), event updates, dates, budget figures, new people and open questions, each with a source line (date, sender, subject). Update the events file for any event change, summarise attached minutes into the Meetings log, and write the sync date at the top.
 
 Report in this order: needs George's action (with deadlines), decisions made, event changes, FYI. Keep it short.
 
