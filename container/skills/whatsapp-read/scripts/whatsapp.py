@@ -76,7 +76,10 @@ def main(argv=None, opener=urllib.request.urlopen):
             print(json.dumps(res, indent=2) if a.json else ("\n".join(fmt(m) for m in res["results"]) or f'No messages match "{a.query}".'))
         else:
             res = call("GET", "/chats", opener=opener)
-            print("\n".join(f'{c["name"] or c["jid"]}' for c in res["chats"]) or "No chats are being read yet.")
+            al = res.get("allowlisted", {})
+            print("Allow-listed (anything starting with): " + "; ".join(al.get("names", [])) + (f' + {al["numbers"]} chat(s) by phone number' if al.get("numbers") else ""))
+            print("Reader connected to WhatsApp: " + ("yes" if res.get("connected") else "NO"))
+            print("Chats with messages received so far: " + (", ".join(c["name"] or c["jid"] for c in res["chats"]) or "none yet (a chat appears here when its first message arrives)"))
     except ReadError as e:
         print(f"whatsapp: {e}", file=sys.stderr)
         return 2
