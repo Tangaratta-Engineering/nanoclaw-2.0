@@ -26,7 +26,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dbPath: path.join(dataDir, 'messages.db'),
     authDir: path.join(dataDir, 'auth'),
     allowlistPath: path.join(dataDir, 'allowlist.json'),
-    port: Number(env.WA_PORT || '8770'),
+    port: Number(env.WA_PORT || '8772'),
     host: env.WA_HOST || '0.0.0.0',
     apiKey: env.WA_API_KEY || '',
   };

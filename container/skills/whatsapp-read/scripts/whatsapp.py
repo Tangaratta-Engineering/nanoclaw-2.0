@@ -9,7 +9,7 @@ import urllib.parse
 import urllib.request
 
 # 172.17.0.1 is its own host address so the OneCLI secret for this service is not mixed up with the others.
-BASE = os.environ.get("WHATSAPP_READ_URL", "http://172.17.0.1:8770")
+BASE = os.environ.get("WHATSAPP_READ_URL", "http://172.17.0.1:8772")
 STATE = os.environ.get("WHATSAPP_READ_STATE", "/tmp/whatsapp-last-new.json")
 TIMEOUT = 30
 
