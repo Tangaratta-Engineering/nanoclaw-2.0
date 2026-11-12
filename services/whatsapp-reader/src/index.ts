@@ -73,7 +73,7 @@ async function connect(): Promise<void> {
         const jid = msg.key.remoteJid;
         if (!jid || jid === 'status@broadcast' || !msg.key.id) continue;
         let name = await nameOf(jid);
-        if (!jid.endsWith('@g.us')) name = msg.pushName ?? name;
+        if (!jid.endsWith('@g.us') && !msg.key.fromMe && msg.pushName) name = msg.pushName; // a one-to-one chat is named by the OTHER person (pushName on our own messages is George)
         const allowed = isAllowed(loadAllowlist(cfg.allowlistPath), jid, name); // re-read each time: edits apply at once
         store.setChat(jid, name, allowed);
         if (!allowed) continue; // never stored
