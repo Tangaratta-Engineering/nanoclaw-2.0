@@ -32,13 +32,14 @@ Why it exists: some systems (booking engines, receipts) send a plain-text part t
 
 ```bash
 D=/app/skills/inbox-triage/scripts/inbox-draft
-$D create --thread <thread id> --body-file reply.txt     # saves a Gmail draft; nothing is sent
+$D create --thread <thread id> --body-file reply.txt     # a REPLY: saves a Gmail draft; nothing is sent
+$D new --to teacher@school.edu --subject "Henry leaving early" --body-file note.txt   # a NEW email (not a reply): saves a draft; nothing is sent
 $D card <draft id>                                       # prints To / Subject / full text to show George
 $D edit <draft id> --body-file new.txt                   # revise; the card must be shown again
 $D send <draft id>                                       # only after George pressed Send on that card
 ```
 
-Enforced in code: replies only, to people already on the thread, plain text; `send` fails unless the draft's current text is exactly what `card` last printed; at most 10 sends a day.
+Enforced in code: a reply goes only to people already on the thread; a new email (`new`) goes to exactly one recipient (no lists, no Cc/Bcc) and its card says "NEW EMAIL" and warns when the address is not in George's mail history, so check it. Both are plain text, no attachments. `send` fails unless the draft's current text is exactly what `card` last printed; at most 10 sends a day.
 
 ## `inbox-calendar`
 

@@ -35,6 +35,8 @@ class Gmail:
         if path == "/drafts/send":
             self.sent.append(body["id"])
             return {"id": "sentmsg"}
+        if path.startswith("/messages?"):
+            return {"messages": [{"id": "x"}]} if "rebecca" in path else {}
         raise AssertionError((method, path))
 
 
@@ -89,6 +91,39 @@ class T(unittest.TestCase):
         with self.assertRaises(g.GmailError) as c:
             d.cmd_send(NS(draft="d11"), self.g)
         self.assertIn("limit", str(c.exception))
+
+    def new(self, to="rebecca@school.edu", subject="Henry leaving early"):
+        return d.cmd_new(NS(to=to, subject=subject, body_file=self.body), self.g)
+
+    def test_new_email_needs_card_and_send_goes_only_to_that_one_person(self):
+        self.new()
+        with self.assertRaises(g.GmailError):
+            d.cmd_send(NS(draft="d1"), self.g)           # not shown yet
+        card = d.cmd_card(NS(draft="d1"), self.g)
+        self.assertIn("NEW EMAIL (not a reply)", card)
+        self.assertNotIn("NOT in George's mail history", card)   # rebecca appears in the mailbox
+        self.assertIn("To: rebecca@school.edu", card)
+        d.cmd_send(NS(draft="d1"), self.g)
+        self.assertEqual(self.g.sent, ["d1"])
+
+    def test_new_email_to_an_unknown_address_is_flagged_on_the_card(self):
+        self.new(to="stranger@elsewhere.com")
+        self.assertIn("NOT in George's mail history", d.cmd_card(NS(draft="d1"), self.g))
+
+    def test_new_email_rejects_lists_cc_and_bad_input(self):
+        for bad in ("a@x.com, b@x.com", "a@x.com;b@x.com", "nope", "A <a@x.com>\nBcc: z@x.com", "george@example.com"):
+            with self.assertRaises(g.GmailError):
+                self.new(to=bad)
+        with self.assertRaises(g.GmailError):
+            self.new(subject="two\nlines")
+        self.assertEqual(self.g.drafts, {})
+
+    def test_new_email_edit_invalidates_card(self):
+        self.new(); d.cmd_card(NS(draft="d1"), self.g)
+        open(self.body, "w").write("Different words")
+        d.cmd_edit(NS(draft="d1", body_file=self.body), self.g)
+        with self.assertRaises(g.GmailError):
+            d.cmd_send(NS(draft="d1"), self.g)
 
 
 if __name__ == "__main__":

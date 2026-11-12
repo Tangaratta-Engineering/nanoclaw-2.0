@@ -2,7 +2,8 @@
 """Reply drafts with an approval gate: create -> card (shown to George) -> send exactly what was shown.
 
 Safety rules enforced here, not just in prose:
-- replies only, on an existing thread, to people already on that thread, plain text, no attachments;
+- replies only go to people already on that thread; a NEW email (`new`) goes to exactly one recipient, no Cc/Bcc;
+- plain text, no attachments;
 - a draft can be sent only if its current text is exactly what `card` last displayed;
 - at most MAX_SENDS_PER_DAY sends per day.
 """
@@ -13,6 +14,7 @@ import json
 import os
 import sys
 import time
+import urllib.parse
 from email.message import EmailMessage
 from email.utils import getaddresses
 
@@ -102,6 +104,39 @@ def cmd_create(a, call):
     return f"draft {d['id']} created for {', '.join(to)} (not shown, not sent)"
 
 
+def valid_address(x):
+    parsed = addrs(x)
+    return len(parsed) == 1 and "," not in x and ";" not in x and "\n" not in x and "@" in parsed[0] and " " not in parsed[0]
+
+
+def known_correspondent(call, address):
+    """Has George ever exchanged mail with this address? Shown on the card so a new recipient stands out."""
+    q = f'from:{address} OR to:{address}'
+    r = call("GET", "/messages?maxResults=1&q=" + urllib.parse.quote(q))
+    return bool(r.get("messages"))
+
+
+def cmd_new(a, call):
+    """A new email (not a reply). Still only a draft: it is sent only after `card` and George's [Send]."""
+    body = open(a.body_file, encoding="utf-8").read().strip()
+    if not body:
+        raise g.GmailError("empty draft body")
+    if not valid_address(a.to):
+        raise g.GmailError("give exactly one recipient address (no lists, no Cc/Bcc)")
+    subject = a.subject.strip()
+    if not subject or "\n" in subject or "\r" in subject:
+        raise g.GmailError("give a one-line subject")
+    me = call("GET", "/profile")["emailAddress"].lower()
+    to = addrs(a.to)
+    if to == [me]:
+        raise g.GmailError("that is George's own address")
+    d = call("POST", "/drafts", {"message": {"raw": build_raw(to, subject, body, None, "")}})
+    st = load()
+    st["drafts"][d["id"]] = {"thread": None, "created": int(time.time()), "shown": None, "sent": False, "new": True}
+    save(st)
+    return f"draft {d['id']} created: new email to {to[0]} (not shown, not sent)"
+
+
 def cmd_card(a, call):
     st = load()
     rec = st["drafts"].get(a.draft)
@@ -110,7 +145,11 @@ def cmd_card(a, call):
     to, subj, body, _ = current(call, a.draft)
     rec["shown"] = digest(to, subj, body)
     save(st)
-    return f"To: {', '.join(to)}\nSubject: {subj}\n\n{body}"
+    head = ""
+    if rec.get("new"):
+        known = known_correspondent(call, to[0]) if len(to) == 1 else False
+        head = "NEW EMAIL (not a reply)" + ("" if known else f" - {to[0]} is NOT in George's mail history: check the address") + "\n"
+    return f"{head}To: {', '.join(to)}\nSubject: {subj}\n\n{body}"
 
 
 def cmd_edit(a, call):
@@ -121,7 +160,8 @@ def cmd_edit(a, call):
     body = open(a.body_file, encoding="utf-8").read().strip()
     to, subj, _, m = current(call, a.draft)
     raw = build_raw(to, subj, body, g.header(m, "In-Reply-To"), g.header(m, "References"))
-    call("PUT", f"/drafts/{a.draft}", {"message": {"raw": raw, "threadId": rec["thread"]}})
+    msg = {"raw": raw, **({"threadId": rec["thread"]} if rec["thread"] else {})}
+    call("PUT", f"/drafts/{a.draft}", {"message": msg})
     rec["shown"] = None  # must be shown again before it can be sent
     save(st)
     return "draft updated; show the card again before sending"
@@ -150,13 +190,14 @@ def cmd_send(a, call):
 def main(argv=None, call=g.call):
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("new"); s.add_argument("--to", required=True); s.add_argument("--subject", required=True); s.add_argument("--body-file", required=True)
     s = sub.add_parser("create"); s.add_argument("--thread", required=True); s.add_argument("--body-file", required=True); s.add_argument("--to", action="append")
     for n in ("card", "send"):
         s = sub.add_parser(n); s.add_argument("draft")
     s = sub.add_parser("edit"); s.add_argument("draft"); s.add_argument("--body-file", required=True)
     a = ap.parse_args(argv)
     try:
-        print({"create": cmd_create, "card": cmd_card, "edit": cmd_edit, "send": cmd_send}[a.cmd](a, call))
+        print({"new": cmd_new, "create": cmd_create, "card": cmd_card, "edit": cmd_edit, "send": cmd_send}[a.cmd](a, call))
         return 0
     except g.GmailError as e:
         print(f"inbox-draft: {e}", file=sys.stderr)
