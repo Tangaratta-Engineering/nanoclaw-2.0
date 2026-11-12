@@ -1,0 +1,17 @@
+[Unit]
+Description=NanoClaw WhatsApp reader (read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/nanoclaw-2.0/services/whatsapp-reader
+EnvironmentFile=%h/projects/nanoclaw-2.0/services/whatsapp-reader/whatsapp-reader.env
+Environment=HOME=%h
+Environment=PATH=/home/george/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.nvm/versions/node/v22.22.3/bin/node --experimental-strip-types --no-warnings src/index.ts
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

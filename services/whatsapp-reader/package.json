@@ -1,0 +1,23 @@
+{
+  "name": "nanoclaw-whatsapp-reader",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only WhatsApp reader: stores messages from allow-listed chats locally and serves them to agents. Cannot send, mark read or show presence.",
+  "scripts": {
+    "start": "node --experimental-strip-types src/index.ts",
+    "link": "node --experimental-strip-types src/link.ts",
+    "test": "node --experimental-strip-types --test src/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "pino": "9.6.0",
+    "qrcode": "1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/qrcode": "1.5.6",
+    "typescript": "^5.9.3"
+  }
+}
