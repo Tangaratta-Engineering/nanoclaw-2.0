@@ -74,7 +74,10 @@ async function connect(): Promise<void> {
         if (!jid || jid === 'status@broadcast' || !msg.key.id) continue;
         let name = await nameOf(jid);
         if (!jid.endsWith('@g.us') && !msg.key.fromMe && msg.pushName) name = msg.pushName; // a one-to-one chat is named by the OTHER person (pushName on our own messages is George)
-        const allowed = isAllowed(loadAllowlist(cfg.allowlistPath), jid, name); // re-read each time: edits apply at once
+        // WhatsApp may address a person by an anonymous id (@lid) and carry their phone number as the alternate id
+        const alt = (msg.key as { remoteJidAlt?: string }).remoteJidAlt;
+        const list = loadAllowlist(cfg.allowlistPath); // re-read each time: edits apply at once
+        const allowed = isAllowed(list, jid, name) || (!!alt && isAllowed(list, alt, null));
         store.setChat(jid, name, allowed);
         if (!allowed) continue; // never stored
         const body = extractText(msg.message as Record<string, any> | null);
