@@ -1,4 +1,4 @@
-import io, json, os, sys, unittest, urllib.error
+import io, json, os, sys, unittest, unittest.mock, urllib.error
 sys.path.insert(0, os.path.dirname(__file__))
 import school_posts as sp
 
@@ -83,6 +83,30 @@ class T(unittest.TestCase):
         self.assertIn("Nothing unreported", out)
         code, out, _, _ = self.run_cli(["search", "zzz"], {"/posts/search": {"query": "zzz", "count": 0, "results": []}})
         self.assertIn("No posts match", out)
+
+
+    def test_events_upcoming_show_search_and_changes(self):
+        ev = {"eventId": "e1", "title": "Garden Party", "start": "2026-11-25T09:00:00+11:00", "allDay": False, "location": "Hall",
+              "status": "PUBLISHED", "groups": ["School News"], "content": "Bring a hat"}
+        seen = []
+        routes = {"/events/upcoming": {"count": 1, "events": [ev]}, "/events/search": {"results": []},
+                  "/events/e1": {**ev, "removedAt": None, "changes": [{"detectedAt": "2026-11-12T03:00", "change": "changed", "summary": "time: 8 -> 9"}]},
+                  "/new-events": {"wakeAgent": True, "data": {"count": 1, "changes": [{"change": "cancelled", "summary": "status", "event": {**ev, "status": "CANCELLED"}}]}}}
+        op = opener_for(routes, seen)
+        out = io.StringIO()
+        for argv in (["events", "upcoming", "--days", "7", "--group", "Orana"], ["events", "search", "swim"], ["events", "show", "e1"], ["events", "changes"]):
+            with unittest.mock.patch("sys.stdout", out):
+                self.assertEqual(sp.main(argv, opener=op), 0)
+        text = out.getvalue()
+        self.assertIn("Wed 25 Nov 09:00 | Garden Party | at Hall", text)
+        self.assertIn("days=7", seen[0][1]); self.assertIn("group=Orana", seen[0][1])
+        self.assertIn('No calendar events match "swim"', text)
+        self.assertIn("changed: time: 8 -> 9", text)
+        self.assertIn("CANCELLED: ", text); self.assertIn("[CANCELLED]", text)
+        self.assertTrue(all(h.get("X-api-key") is None for _, _, _, h in seen))   # the gateway adds the key, never this script
+
+    def test_all_day_event_shows_the_date_not_a_time(self):
+        self.assertEqual(sp.when({"start": "2026-11-20T00:00:00+11:00", "allDay": True}), "Fri 20 Nov (all day)")
 
 
 if __name__ == "__main__":
