@@ -60,8 +60,6 @@ def fmt_item(p):
         tags.append("on special")
     if not p.get("available", True):
         tags.append("UNAVAILABLE")
-    if p.get("marketplace"):
-        tags.append("MARKETPLACE (third-party seller, not Woolworths' own range)")
     return f"{p['stockcode']} | {p['name']} | {p.get('size') or ''} | {money(p.get('price'))}" + (f" | {p['cup']}" if p.get("cup") else "") + (f" | {', '.join(tags)}" if tags else "")
 
 
@@ -101,9 +99,14 @@ def run(argv, ask=ask):
             op = "history" if a.cmd == "usual" else "search"
             d = ask({"op": op, "query": a.query, "limit": a.n})
             if not d["items"]:
+                hidden = d.get("marketplaceHidden") or 0
+                if hidden and op == "search":
+                    return f"No matches in Woolworths' own range ({hidden} Marketplace item(s) hidden: George does not buy from third-party sellers)."
                 return "No matches." if op == "search" else "Nothing like that in his purchase history. Try `search`."
             head = "From what George has bought before:" if op == "history" else "Woolworths search results:"
-            return head + "\n" + "\n".join(fmt_item(p) for p in d["items"])
+            hidden = d.get("marketplaceHidden") or 0
+            note = f"\n({hidden} Marketplace item(s) hidden: George does not buy from third-party sellers)" if hidden else ""
+            return head + "\n" + "\n".join(fmt_item(p) for p in d["items"]) + note
         if a.cmd == "lists":
             d = ask({"op": "lists"})
             return "\n".join(f"{l['name']} ({l['count']} items)" for l in d["lists"])
