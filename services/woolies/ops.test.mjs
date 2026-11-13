@@ -123,3 +123,13 @@ test('removing from any list other than NanoClaw is refused', async () => {
   await assert.rejects(ops.remove({ op: 'remove', list: 'Other', items: [{ stockcode: 1 }] }, fakePage([], { items: { 1: 1 } })), /only remove items from the NanoClaw list/);
   await assert.rejects(ops.clear({ op: 'clear', list: 'Other', confirm: true }, fakePage([], { items: { 1: 1 } })), /only remove items/);
 });
+
+test('search and history hide Marketplace items (10-digit codes), count them, and add still refuses their codes', async () => {
+  const inPage = async () => ({ items: [{ stockcode: 1122348401, name: 'Dettol 750ML' }, { stockcode: 30302, name: 'Dettol 500mL' }] });
+  for (const op of ['search', 'history']) {
+    const r = await ops[op]({ op, query: 'dettol' }, inPage);
+    assert.deepEqual(r.items.map((i) => i.stockcode), [30302]);
+    assert.equal(r.marketplaceHidden, 1);
+  }
+  assert.ok(validate({ op: 'add', list: 'ok', items: [{ stockcode: 1122348401 }] }));
+});
