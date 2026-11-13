@@ -191,13 +191,17 @@ async function removeFromList(req, inPage, stockcodes) {
   return { list: l.name, removed: rows.map((x) => x.stockcode), notOnList: missing };
 }
 
+/** Woolworths' own products have codes up to 8 digits; 10-digit codes are Marketplace items sold by third parties. */
+export const MAX_OWN_STOCKCODE = 99999999;
+const flagMarketplace = (r) => (Array.isArray(r?.items) ? { ...r, items: r.items.map((i) => ({ ...i, marketplace: Number(i.stockcode) > MAX_OWN_STOCKCODE })) } : r);
+
 export const ops = {
   async status(_req, inPage) {
     const r = await inPage(listsFn, {});
     return { signedIn: !r.error, detail: r.error || `${r.lists.length} lists` };
   },
-  async search(req, inPage) { return unwrap(await inPage(searchFn, { query: req.query, limit: req.limit ?? 6 })); },
-  async history(req, inPage) { return unwrap(await inPage(historyFn, { query: req.query, limit: req.limit ?? 6 })); },
+  async search(req, inPage) { return flagMarketplace(unwrap(await inPage(searchFn, { query: req.query, limit: req.limit ?? 6 }))); },
+  async history(req, inPage) { return flagMarketplace(unwrap(await inPage(historyFn, { query: req.query, limit: req.limit ?? 6 }))); },
   async lists(_req, inPage) { return unwrap(await inPage(listsFn, {})); },
   async show(req, inPage) {
     const l = await findList(req, inPage, false);

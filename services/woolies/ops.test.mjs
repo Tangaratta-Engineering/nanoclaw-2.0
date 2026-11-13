@@ -123,3 +123,10 @@ test('removing from any list other than NanoClaw is refused', async () => {
   await assert.rejects(ops.remove({ op: 'remove', list: 'Other', items: [{ stockcode: 1 }] }, fakePage([], { items: { 1: 1 } })), /only remove items from the NanoClaw list/);
   await assert.rejects(ops.clear({ op: 'clear', list: 'Other', confirm: true }, fakePage([], { items: { 1: 1 } })), /only remove items/);
 });
+
+test('search flags Marketplace items (10-digit codes) and keeps Woolworths own range unflagged', async () => {
+  const inPage = async () => ({ items: [{ stockcode: 1122348401, name: 'Dettol 750ML' }, { stockcode: 30302, name: 'Dettol 500mL' }] });
+  const r = await ops.search({ op: 'search', query: 'dettol' }, inPage);
+  assert.deepEqual(r.items.map((i) => i.marketplace), [true, false]);
+  assert.ok(validate({ op: 'add', list: 'ok', items: [{ stockcode: 1122348401 }] }), 'a Marketplace code is still refused by add');
+});

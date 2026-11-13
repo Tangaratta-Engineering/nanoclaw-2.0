@@ -18,12 +18,35 @@ for (const d of ['in', 'out']) fs.mkdirSync(path.join(QUEUE, d), { recursive: tr
 fs.chmodSync(QUEUE, 0o777); fs.chmodSync(path.join(QUEUE, 'in'), 0o777); fs.chmodSync(path.join(QUEUE, 'out'), 0o777);
 
 /** Evaluate `fn(arg)` in the Woolworths page and return its JSON result. */
-async function inPage(fn, arg) {
+/** A tab that answers a trivial request within a few seconds. A frozen tab never answers, so it is skipped. */
+function alive(ws) {
+  return new Promise((res) => {
+    const onMsg = (e) => { if (JSON.parse(e.data).id === 99) { ws.removeEventListener('message', onMsg); res(true); } };
+    ws.addEventListener('message', onMsg);
+    ws.send(JSON.stringify({ id: 99, method: 'Runtime.evaluate', params: { expression: '1', returnByValue: true } }));
+    setTimeout(() => { ws.removeEventListener('message', onMsg); res(false); }, 4000);
+  });
+}
+
+/** Connect to the first Woolworths tab that is actually responding. */
+async function openTab() {
   const targets = await (await fetch(`${CDP}/json`)).json();
-  const t = targets.find((x) => x.type === 'page' && x.url.includes('woolworths.com.au'));
-  if (!t) throw new Error('no Woolworths tab is open in the server Chrome');
-  const ws = new WebSocket(t.webSocketDebuggerUrl);
-  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('cannot reach the server Chrome')); });
+  const pages = targets.filter((x) => x.type === 'page' && x.url.includes('woolworths.com.au'));
+  if (!pages.length) throw new Error('no Woolworths tab is open in the server Chrome');
+  for (const t of pages) {
+    const ws = new WebSocket(t.webSocketDebuggerUrl);
+    try {
+      await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('cannot reach the server Chrome')); });
+      if (await alive(ws)) return ws;
+      log('skipping a frozen Woolworths tab:', t.url.slice(0, 80));
+    } catch { /* try the next tab */ }
+    try { ws.close(); } catch { /* ignore */ }
+  }
+  throw new Error('every Woolworths tab in the server Chrome is frozen: close or reload them');
+}
+
+async function inPage(fn, arg) {
+  const ws = await openTab();
   try {
     const expr = `(${fn.toString()})(${JSON.stringify(arg)})`;
     const result = await new Promise((res, rej) => {

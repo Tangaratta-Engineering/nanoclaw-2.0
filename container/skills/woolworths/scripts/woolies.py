@@ -60,6 +60,8 @@ def fmt_item(p):
         tags.append("on special")
     if not p.get("available", True):
         tags.append("UNAVAILABLE")
+    if p.get("marketplace"):
+        tags.append("MARKETPLACE (third-party seller, not Woolworths' own range)")
     return f"{p['stockcode']} | {p['name']} | {p.get('size') or ''} | {money(p.get('price'))}" + (f" | {p['cup']}" if p.get("cup") else "") + (f" | {', '.join(tags)}" if tags else "")
 
 
