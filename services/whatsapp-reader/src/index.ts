@@ -4,7 +4,7 @@ import makeWASocket, { Browsers, DisconnectReason, fetchLatestBaileysVersion, us
 import { pino } from 'pino';
 
 import { handle } from './api.ts';
-import { isAllowed, loadAllowlist, loadConfig } from './config.ts';
+import { isAllowed, labelFor, loadAllowlist, loadConfig } from './config.ts';
 import { extractText } from './extract.ts';
 import { Store } from './store.ts';
 
@@ -75,15 +75,24 @@ async function connect(): Promise<void> {
         if (!jid || jid === 'status@broadcast' || !msg.key.id) continue;
         let name = await nameOf(jid);
         if (!jid.endsWith('@g.us') && !msg.key.fromMe && msg.pushName) name = msg.pushName; // a one-to-one chat is named by the OTHER person (pushName on our own messages is George)
-        // WhatsApp may address a person by an anonymous id (@lid) and carry their phone number as the alternate id
-        const alt = (msg.key as { remoteJidAlt?: string }).remoteJidAlt;
+        // WhatsApp may address a person by an anonymous id (@lid); the phone-number id comes as the alternate or from its mapping
+        let alt = (msg.key as { remoteJidAlt?: string }).remoteJidAlt;
+        if (!alt && jid.endsWith('@lid')) {
+          try {
+            alt = (await (sock as any).signalRepository?.lidMapping?.getPNForLID?.(jid)) ?? undefined;
+          } catch {
+            /* no mapping yet */
+          }
+        }
         const list = loadAllowlist(cfg.allowlistPath); // re-read each time: edits apply at once
+        const label = labelFor(list, jid, alt);
+        if (label) name = label; // the name George gave this chat wins over the person's own profile name
         const allowed = isAllowed(list, jid, name) || (!!alt && isAllowed(list, alt, null));
         store.setChat(jid, name, allowed);
         if (!allowed) continue; // never stored
         const body = extractText(msg.message as Record<string, any> | null);
         if (!body) continue;
-        const sender = msg.key.fromMe ? 'George' : msg.pushName || (msg.key.participant ?? jid).split('@')[0];
+        const sender = msg.key.fromMe ? 'George' : !jid.endsWith('@g.us') && label ? label : msg.pushName || (msg.key.participant ?? jid).split('@')[0];
         store.add({ id: msg.key.id, chatJid: jid, chatName: name ?? jid, sender, ts: Number(msg.messageTimestamp ?? Math.floor(Date.now() / 1000)), text: body.text, kind: body.kind });
       } catch (e) {
         log('message skipped:', String(e).slice(0, 120));

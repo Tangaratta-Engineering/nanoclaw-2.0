@@ -4,7 +4,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import { handle, keyOk } from './api.ts';
-import { isAllowed } from './config.ts';
+import { isAllowed, labelFor } from './config.ts';
 import { extractText } from './extract.ts';
 import { Store } from './store.ts';
 
@@ -84,4 +84,16 @@ test('GUARD: nothing in this service can send, mark read or show presence', () =
     assert.doesNotMatch(src, forbidden, `${f} must not call a WhatsApp write function`);
   }
   assert.match(fs.readFileSync(path.join(dir, 'index.ts'), 'utf8'), /markOnlineOnConnect:\s*false/);
+});
+
+test('a labelled chat is found under either of the ids WhatsApp may use and shows the name George gave it', () => {
+  const list = { namePrefixes: [], jids: ['61406691196@s.whatsapp.net'], labels: { '61406691196@s.whatsapp.net': 'James Wong' } };
+  assert.equal(labelFor(list, '123@lid', '61406691196@s.whatsapp.net'), 'James Wong');
+  assert.equal(labelFor(list, '123@lid', undefined), null);
+  assert.equal(isAllowed(list, '61406691196@s.whatsapp.net', null), true);
+  const s = new Store(':memory:');
+  s.setChat('123@lid', 'James Wong', true);
+  s.add({ id: '1', chatJid: '123@lid', chatName: 'James Wong', sender: 'James Wong', ts: now, text: 'Lesson moved to 4pm', kind: 'text' });
+  assert.equal(s.recent(24, 'James').length, 1);          // found by name
+  assert.equal(s.search('James lesson').length, 1);       // and by words, name included
 });
