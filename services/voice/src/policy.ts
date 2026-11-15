@@ -40,6 +40,16 @@ export function isNoise(text: string, reliability: string, whileSpeaking: boolea
 }
 
 /**
+ * George spoke over her with something real (isNoise has already dropped unreliable or one- and two-word clips): if it is
+ * long enough to be a thought rather than "mm-hm" or "yeah", she should stop and listen instead of finishing her reply
+ * and answering the end of what he said later. `minWords` 0 turns this off.
+ */
+const BACKCHANNEL = new Set(['mm', 'hm', 'mhm', 'uh', 'um', 'yeah', 'yes', 'yep', 'yup', 'no', 'okay', 'ok', 'right', 'sure', 'cool', 'good', 'great', 'thanks', 'thank', 'you', 'oh', 'ah', 'well']);
+export function shouldBargeIn(text: string, minWords: number): boolean {
+  return minWords > 0 && norm(text).split(' ').filter((w) => w && !BACKCHANNEL.has(w)).length >= minWords;
+}
+
+/**
  * Whisper is given a hint list of family and agent names; on a short noisy clip it echoes that list back ("Tiff, Timmy,
  * George, Emily, Sophie, Turramurra, Sydney, NanoClaw") as if it had been said. A run of three or more words that
  * are all names from the hint list (or agent names) is such an echo, never a request.

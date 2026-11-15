@@ -28,7 +28,7 @@ import { OutboxWatcher } from './outbox.ts';
 import { AddresseeState, isForAgent } from './addressee.ts';
 import { Floor } from './floor.ts';
 import { SpokenLog } from './echo.ts';
-import { splitForSpeech, stripEndWord, fillerFor, addressees, isLeadIn, isNoise, isPromptEcho, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
+import { splitForSpeech, stripEndWord, fillerFor, addressees, isLeadIn, isNoise, shouldBargeIn, isPromptEcho, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
 import { transcribe } from './stt.ts';
 import { SendGate } from './gate.ts';
 import { GoogleTtsWorker, Speaker, TtsWorker } from './tts.ts';
@@ -37,6 +37,7 @@ const MIN_SECS = 0.5;
 const MIN_RMS = 0.005;
 const SILENCE_MS = 1300; // let a thought finish before cutting the clip
 const MAX_SPOKEN_PER_TURN = 2; // agent messages spoken per turn (a quick acknowledgement, then the answer); the rest stay as text
+const BARGE_IN_WORDS = Number(process.env.VOICE_BARGE_IN_WORDS ?? '4'); // he speaks over her with at least this many words: she stops and listens (0 = she always finishes first)
 const FILLER_MS = Number(process.env.VOICE_FILLER_MS || '6000'); // say a short filler if the agent is silent this long
 const TURN_GAP_MS = 15_000; // a message this long after the last spoken one starts a new turn (e.g. a task result)
 
@@ -229,6 +230,14 @@ async function processUtterance(pcm: Buffer): Promise<void> {
   if (reliability === 'poor') {
     speechQueue.push("Sorry, I didn't catch that. Could you say it again?");
     void drainSpeech();
+    return;
+  }
+  if (wasBusy && shouldBargeIn(text, BARGE_IN_WORDS)) {
+    log('barge-in: he spoke over her, so she stops and listens');
+    const earlier = pending.splice(0); // what he said earlier while she was talking still counts
+    stopSpeaking();
+    gate.add([...earlier, text].join(' '));
+    lastClipEnd = clipEnded;
     return;
   }
   lastClipEnd = clipEnded;
