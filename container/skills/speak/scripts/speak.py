@@ -78,6 +78,48 @@ def assistant_name():
     return os.environ.get("ASSISTANT_NAME", "")
 
 
+_ONES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen",
+         "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+_TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
+
+def number_words(n):
+    """1200 -> 'one thousand two hundred'. Whole numbers below a trillion (Australian: no 'and' dropped, 'and' after hundred)."""
+    if n < 20:
+        return _ONES[n]
+    if n < 100:
+        return _TENS[n // 10] + ("-" + _ONES[n % 10] if n % 10 else "")
+    if n < 1000:
+        return _ONES[n // 100] + " hundred" + (" and " + number_words(n % 100) if n % 100 else "")
+    for size, name in ((10**9, "billion"), (10**6, "million"), (1000, "thousand")):
+        if n >= size:
+            rest = n % size
+            tail = ""
+            if rest:
+                tail = (" and " if rest < 100 else " ") + number_words(rest)
+            return number_words(n // size) + " " + name + tail
+    return str(n)
+
+
+def say_money(whole, cents):
+    out = number_words(int(whole)) + (" dollar" if int(whole) == 1 else " dollars")
+    if cents and int(cents):
+        out += " and " + number_words(int(cents)) + (" cent" if int(cents) == 1 else " cents")
+    return out
+
+
+def speak_numbers(t):
+    """Amounts and comma-grouped numbers are written out, so no engine can mistake the thousands comma for a decimal point
+    (in Australia 1,200 is one thousand two hundred)."""
+    def money(m):
+        whole = m.group(1).replace(",", "")
+        cents = (m.group(2) or "")[:2].ljust(2, "0") if m.group(2) else ""
+        return say_money(whole, cents)
+    t = re.sub(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?(?!\d)", money, t)
+    t = re.sub(r"(?<![\d.,])\d{1,3}(?:,\d{3})+(?![\d,])", lambda m: number_words(int(m.group(0).replace(",", ""))), t)
+    return t
+
+
 def clean_for_speech(text):
     """Make text speakable: no markdown, links, code or emoji."""
     t = re.sub(r"```.*?```", " ", text, flags=re.S)                 # code blocks
@@ -90,7 +132,7 @@ def clean_for_speech(text):
     t = re.sub(r"^\s*[>*\-•]\s+", "", t, flags=re.M)                 # quotes and bullets
     t = re.sub(r"(\*\*|__|\*|_|~~)", "", t)                          # emphasis
     t = re.sub(r"[\U0001F000-\U0001FAFF☀-➿️]", "", t)  # emoji / symbols
-    t = re.sub(r"\$\s?(\d[\d,]*(?:\.\d+)?)", r"\1 dollars", t)       # $1,789 -> 1,789 dollars
+    t = speak_numbers(t)                                              # $1,789 -> one thousand seven hundred and eighty-nine dollars
     t = t.replace("&", " and ").replace("→", " to ").replace("—", ", ").replace("–", " to ")
     t = re.sub(r"\s*\n+\s*", ". ", t)                                # line breaks -> sentence breaks
     t = re.sub(r"\.\s*\.", ".", t)
