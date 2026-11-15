@@ -154,3 +154,11 @@ test('speaking over her interrupts only when it is a real thought', () => {
   assert.equal(shouldBargeIn('No, wait, that is the wrong day.', 4), true);
   assert.equal(shouldBargeIn('No wait that is wrong', 0), false); // switched off
 });
+
+test('a looping list of names (some garbled) is the transcriber, not George', () => {
+  const vocab = 'Tiff, Timmy, George, Emily, Sophie, Turramurra, Sydney, NanoClaw';
+  assert.equal(isPromptEcho('Tiff, Timmy, George, Emily, Sophie, Turramurra, Scythe, Emo, Tiffy, Slytherin, Keeley, Slytherin, Emo, Tiffy, Slytherin, Keeley, Slytherin', vocab), true);
+  assert.equal(isPromptEcho('Slytherin, Keeley, Slytherin, Keeley, Slytherin, Keeley', vocab), true);
+  assert.equal(isPromptEcho('Tiff, remind me to book Sophie, Henry and Emily for swimming on Tuesday, then call Jack', vocab), false);
+  assert.equal(isPromptEcho('I need milk, eggs, bread, butter, cheese and apples', vocab), false);
+});

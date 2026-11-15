@@ -59,7 +59,25 @@ export function isPromptEcho(text: string, vocabulary: string): boolean {
     norm(vocabulary + ' tiff timmy timmie jimmy jack jackie george emily henry sophie turramurra sydney nanoclaw').split(' '),
   );
   const words = norm(text).split(' ').filter((w) => w && w !== 'and');
-  return words.length >= 3 && words.every((w) => known.has(w));
+  if (words.length >= 3 && words.every((w) => known.has(w))) return true;
+  return isNameListLoop(text, known);
+}
+
+/**
+ * A long comma-separated run of single words that starts like the hint list or repeats itself ("Tiff, Timmy, George,
+ * Emily, Sophie, Turramurra, Scythe, Emo, Slytherin, Keeley, Slytherin, ...") is the transcriber looping on silence,
+ * even when some of the words are garbled versions of the names. Real speech is not a dozen one-word items.
+ */
+function isNameListLoop(text: string, known: Set<string>): boolean {
+  const segments = text.split(/[,.;]/).map((s) => norm(s)).filter(Boolean);
+  if (segments.length < 6) return false;
+  const single = segments.filter((s) => !s.includes(' '));
+  if (single.length / segments.length < 0.7) return false;
+  const counts = new Map<string, number>();
+  for (const s of single) counts.set(s, (counts.get(s) ?? 0) + 1);
+  const repeated = [...counts.values()].some((n) => n >= 3);
+  const knownNames = single.filter((s) => known.has(s)).length;
+  return repeated || knownNames >= 3;
 }
 
 /** Speakable version of a reply: code spans removed; very long replies are cut at a sentence end (default ~1,600 characters, about 100 s of speech) with a pointer to the chat. */
