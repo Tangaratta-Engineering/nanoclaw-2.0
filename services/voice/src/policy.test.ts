@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { stripEndWord, fillerFor, addressees, agentKeyOf, debounceFor, splitForSpeech, isForMe, isSleepCommand, lifecycleAction, isLeadIn, startsWithName, isNoise, isPromptEcho, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
+import { stripEndWord, fillerFor, addressees, agentKeyOf, debounceFor, splitForSpeech, isForMe, isSleepCommand, lifecycleAction, isLeadIn, startsWithName, isNoise, shouldBargeIn, isPromptEcho, isStopCommand, voiceSummary, wantsFullReadout } from './policy.ts';
 
 test('stop words only when short', () => {
   for (const t of ['Stop.', 'Stop talking', 'Hold on', 'wait', 'OK stop!', 'Tiff, stop', 'Tiff, Tiff, stop, stop, stop, stop.', 'Stop stop stop', 'Tiff stop please', 'Stop, stop, be quiet', 'hey tiff hold on', 'Jimmy, Jimmy, stop stop']) assert.ok(isStopCommand(t), t);
@@ -145,4 +145,20 @@ test('the name hint list echoed back is not speech', () => {
   assert.equal(isPromptEcho('Tiff, Jimmy and Jack', vocab), true);
   assert.equal(isPromptEcho('Tiff, remind me to call Emily', vocab), false);
   assert.equal(isPromptEcho('Tiff', vocab), false);
+});
+
+test('speaking over her interrupts only when it is a real thought', () => {
+  assert.equal(shouldBargeIn('Yeah.', 4), false);
+  assert.equal(shouldBargeIn('Mm-hm, right, okay.', 4), false);
+  assert.equal(shouldBargeIn('Yeah yeah, right, okay, thanks so much.', 4), false); // agreeing noises
+  assert.equal(shouldBargeIn('No, wait, that is the wrong day.', 4), true);
+  assert.equal(shouldBargeIn('No wait that is wrong', 0), false); // switched off
+});
+
+test('a looping list of names (some garbled) is the transcriber, not George', () => {
+  const vocab = 'Tiff, Timmy, George, Emily, Sophie, Turramurra, Sydney, NanoClaw';
+  assert.equal(isPromptEcho('Tiff, Timmy, George, Emily, Sophie, Turramurra, Scythe, Emo, Tiffy, Slytherin, Keeley, Slytherin, Emo, Tiffy, Slytherin, Keeley, Slytherin', vocab), true);
+  assert.equal(isPromptEcho('Slytherin, Keeley, Slytherin, Keeley, Slytherin, Keeley', vocab), true);
+  assert.equal(isPromptEcho('Tiff, remind me to book Sophie, Henry and Emily for swimming on Tuesday, then call Jack', vocab), false);
+  assert.equal(isPromptEcho('I need milk, eggs, bread, butter, cheese and apples', vocab), false);
 });

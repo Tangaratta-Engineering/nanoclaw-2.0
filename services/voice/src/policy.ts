@@ -40,6 +40,16 @@ export function isNoise(text: string, reliability: string, whileSpeaking: boolea
 }
 
 /**
+ * George spoke over her with something real (isNoise has already dropped unreliable or one- and two-word clips): if it is
+ * long enough to be a thought rather than "mm-hm" or "yeah", she should stop and listen instead of finishing her reply
+ * and answering the end of what he said later. `minWords` 0 turns this off.
+ */
+const BACKCHANNEL = new Set(['mm', 'hm', 'mhm', 'uh', 'um', 'yeah', 'yes', 'yep', 'yup', 'no', 'okay', 'ok', 'right', 'sure', 'cool', 'good', 'great', 'thanks', 'thank', 'you', 'oh', 'ah', 'well']);
+export function shouldBargeIn(text: string, minWords: number): boolean {
+  return minWords > 0 && norm(text).split(' ').filter((w) => w && !BACKCHANNEL.has(w)).length >= minWords;
+}
+
+/**
  * Whisper is given a hint list of family and agent names; on a short noisy clip it echoes that list back ("Tiff, Timmy,
  * George, Emily, Sophie, Turramurra, Sydney, NanoClaw") as if it had been said. A run of three or more words that
  * are all names from the hint list (or agent names) is such an echo, never a request.
@@ -49,7 +59,25 @@ export function isPromptEcho(text: string, vocabulary: string): boolean {
     norm(vocabulary + ' tiff timmy timmie jimmy jack jackie george emily henry sophie turramurra sydney nanoclaw').split(' '),
   );
   const words = norm(text).split(' ').filter((w) => w && w !== 'and');
-  return words.length >= 3 && words.every((w) => known.has(w));
+  if (words.length >= 3 && words.every((w) => known.has(w))) return true;
+  return isNameListLoop(text, known);
+}
+
+/**
+ * A long comma-separated run of single words that starts like the hint list or repeats itself ("Tiff, Timmy, George,
+ * Emily, Sophie, Turramurra, Scythe, Emo, Slytherin, Keeley, Slytherin, ...") is the transcriber looping on silence,
+ * even when some of the words are garbled versions of the names. Real speech is not a dozen one-word items.
+ */
+function isNameListLoop(text: string, known: Set<string>): boolean {
+  const segments = text.split(/[,.;]/).map((s) => norm(s)).filter(Boolean);
+  if (segments.length < 6) return false;
+  const single = segments.filter((s) => !s.includes(' '));
+  if (single.length / segments.length < 0.7) return false;
+  const counts = new Map<string, number>();
+  for (const s of single) counts.set(s, (counts.get(s) ?? 0) + 1);
+  const repeated = [...counts.values()].some((n) => n >= 3);
+  const knownNames = single.filter((s) => known.has(s)).length;
+  return repeated || knownNames >= 3;
 }
 
 /** Speakable version of a reply: code spans removed; very long replies are cut at a sentence end (default ~1,600 characters, about 100 s of speech) with a pointer to the chat. */
