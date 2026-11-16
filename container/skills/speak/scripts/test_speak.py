@@ -18,8 +18,20 @@ class CleanForSpeech(unittest.TestCase):
         self.assertNotIn("🎉", out)
         self.assertNotIn("(", out)
         self.assertNotIn(" ,", out)
-        self.assertIn("1,789 dollars", out)
-        self.assertIn("1,822 dollars", out)
+        self.assertIn("one thousand seven hundred and eighty-nine dollars", out)
+        self.assertIn("one thousand eight hundred and twenty-two dollars", out)
+
+    def test_numbers_are_written_out_the_australian_way(self):
+        c = speak.clean_for_speech
+        self.assertEqual(c("It is $1,200"), "It is one thousand two hundred dollars.")
+        self.assertIn("fourteen dollars and ninety-nine cents", c("Dettol is $14.99"))
+        self.assertIn("one dollar", c("just $1"))
+        self.assertIn("two thousand and fifty dollars", c("$2,050"))
+        self.assertIn("one million two hundred and thirty-four thousand five hundred and sixty-seven", c("1,234,567 steps"))
+        self.assertIn("1200", c("room 1200"))                 # no comma: left to the engine
+        self.assertIn("2026", c("in 2026"))                    # years stay digits
+        self.assertIn("3.5", c("version 3.5"))                 # decimals untouched
+        self.assertIn("1,2", c("grid 1,2"))                    # not a thousands group
 
     def test_markdown_links_keep_label(self):
         self.assertEqual(speak.clean_for_speech("See [the booking page](https://x.test/a)"), "See the booking page.")
