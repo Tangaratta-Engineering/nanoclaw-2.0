@@ -18,6 +18,9 @@ upstream) and the private session memory (see "Knowledge base" below). **No pers
   afterwards (`git worktree remove`) and delete the merged branch.
 - **PRs target the fork explicitly**: `gh pr create --repo Tangaratta-Engineering/nanoclaw-2.0 ...` (plain `gh` resolves to
   upstream). Subscribe to the PR after creating it.
+- **Docs travel with the PR.** Before creating a PR, update `local-customizations.md` / this runbook / the skill docs on the
+  same branch, and update the private memory (system file, PR history, open items). After the merge, update memory again
+  (PR merged, open item closed). A PR description is not a knowledge base: later sessions will not read it unless told to.
 - **Merge only when the owner says "merge #N"** for that PR. Then, in the live checkout:
   `git pull --ff-only origin main` and `pnpm exec tsx scripts/upgrade-state.ts set "" update-nanoclaw`.
 - **Before pushing**, `git grep` the diff for personal data (names, member/phone numbers, invoice or channel ids). Use

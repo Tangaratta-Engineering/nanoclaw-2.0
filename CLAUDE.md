@@ -289,6 +289,20 @@ Before doing anything else in a new or cleared session:
 2. Read [docs/operations-runbook.md](docs/operations-runbook.md): working rules (worktree + PR flow, merge only on an explicit "merge #N", no secrets or personal data in git), the service map, the bridge pattern and troubleshooting.
 3. **Keep the knowledge base current.** When you change or learn something about a system, update its memory file in the same session; add a row to `docs/local-customizations.md` for each customization; before a session ends, refresh `project-open-items.md`.
 
+### PR rule: the knowledge base is part of the change
+
+A PR description is not a knowledge base (a later session can't see it without running git/gh), so **docs are updated as part of every PR, in this order**:
+
+1. **Before creating the PR** (same branch, same push):
+   - `docs/local-customizations.md`: a new or updated row for any customization.
+   - `docs/operations-runbook.md`: if the change adds or changes a service, port, unit, bridge, command, or working rule.
+   - The skill's own `SKILL.md`/`instructions.md` if behavior changed.
+2. **Before creating the PR, also update the private memory** (`~/.claude/projects/<this-project>/memory/`, not in git): the system's memory file (create one for a new system), `reference-pr-history-*.md` (PR number and one line, status "open"), `project-open-items.md` (what the PR waits on: "merge #N", a restart, a task to create), and the `MEMORY.md` index line if a file was added.
+3. **After George says "merge #N" and it is merged:** do the post-merge steps (pull, upgrade stamp, service restarts, remove the worktree), then update memory again: PR status "merged", the open item removed or changed, and any new "how to operate" detail learned. Never leave memory saying a PR is open once it is merged.
+4. Keep personal identifiers out of everything that goes to git (docs, PR text). They belong only in the private memory.
+
+If you skipped step 1 or 2 when opening a PR, do it before reporting the PR as ready.
+
 ## Local customizations (this fork)
 
 This install carries changes that are not upstream. **Before any `/update-nanoclaw` or `/update-skills`, read [docs/local-customizations.md](docs/local-customizations.md)** — it lists each change, its files, and exactly how to resolve it on upgrade. Never edit skill-installed channel adapters in place (`src/channels/discord.ts` etc.); they are overwritten on upgrade. Put customizations in a separate file and import it from the `src/channels/index.ts` barrel.
