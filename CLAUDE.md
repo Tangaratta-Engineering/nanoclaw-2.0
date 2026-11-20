@@ -224,7 +224,7 @@ Show the output and wait for approval. Installation-specific files (group files,
 
 ## Development
 
-Run commands directly — don't tell the user to run them.
+Run commands directly — don't tell the user to run them. Code changes are delegated to the software orchestrator; see the "Working rules" in [docs/operations-runbook.md](docs/operations-runbook.md).
 
 ```bash
 # Host (Node + pnpm)
@@ -286,7 +286,7 @@ This project uses pnpm with `minimumReleaseAge: 4320` (3 days) in `pnpm-workspac
 Before doing anything else in a new or cleared session:
 
 1. Read the project memory index `~/.claude/projects/<this-project>/memory/MEMORY.md` and the files it lists, at minimum `project-system-map.md`, `feedback-george-working-rules.md` and `project-open-items.md`, then any file for the area you are about to touch. They hold the private state (agent ids, people, pending work) that must not be committed.
-2. Read [docs/operations-runbook.md](docs/operations-runbook.md): working rules (worktree + PR flow, merge only on an explicit "merge #N", no secrets or personal data in git), the service map, the bridge pattern and troubleshooting.
+2. Read [docs/operations-runbook.md](docs/operations-runbook.md): working rules (worktree + PR flow, code changes delegated to the software orchestrator, merge only on an explicit "merge #N", no secrets or personal data in git), the service map, the bridge pattern and troubleshooting.
 3. **Keep the knowledge base current.** When you change or learn something about a system, update its memory file in the same session; add a row to `docs/local-customizations.md` for each customization; before a session ends, refresh `project-open-items.md`.
 
 ### PR rule: the knowledge base is part of the change
