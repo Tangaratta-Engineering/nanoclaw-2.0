@@ -33,7 +33,8 @@ upstream) and the private session memory (see "Knowledge base" below). **No pers
 - **Docs travel with the PR.** Before creating a PR, update `local-customizations.md` / this runbook / the skill docs on the
   same branch, and update the private memory (system file, PR history, open items). After the merge, update memory again
   (PR merged, open item closed). A PR description is not a knowledge base: later sessions will not read it unless told to.
-- **Merge only when the owner says "merge #N"** for that PR. Then, in the live checkout:
+- **Opening a PR needs no approval; merging does.** Branches and PRs can be pushed and opened freely (the PR is how the owner
+  tracks changes). **Merge only when the owner says "merge #N"** for that PR. Then, in the live checkout:
   `git pull --ff-only origin main` and `pnpm exec tsx scripts/upgrade-state.ts set "" update-nanoclaw`.
 - **Before pushing**, `git grep` the diff for personal data (names, member/phone numbers, invoice or channel ids). Use
   made-up examples in tests and docs. Private values go to the database or the private memory.
@@ -81,6 +82,8 @@ profile holds the owner's login. Rules:
 | Woolworths bridge says every tab is "frozen" | the bridge now replaces the tab, then restarts `woolies-chrome` itself (log: "recovered"). By hand: `systemctl --user restart woolies-chrome` (profile and sign-in survive); a hung renderer is shared by all tabs, so closing the tab alone does not help |
 | Claims bridge says the Peoplecare tab is "frozen" | same as Woolworths: it replaces the tab (on Home), then restarts `claims-chrome` itself (max once per 10 min; log: "recovered"). By hand: `systemctl --user restart claims-chrome`; if that loses the Peoplecare login, sign in again with MFA. A claim part-way through is lost on a restart (submit then says to prepare again) |
 | Voice call never answers until George mutes, or says "I didn't get that" a lot | background noise keeping the clip open: look for `clip:` and `background noise ignored` lines (`journalctl --user -u nanoclaw-voice`); tune `VOICE_VOICE_RMS` / `VOICE_FLOOR_MULT` in the unit's env file; `VOICE_NOISE_GATE=0` turns the audio-level endpointing off |
+| Tiff says the nutrition estimator cannot sign in, or never finds foods that exist | (a) a stale real folder in the agent's `data/v2-sessions/<group>/.claude-shared/skills/` (for example an old `nutri`) shadows the symlinked `nutri-skill`: only symlinks to `/app/skills/*` should be there; (b) the estimator (`container/skills/nutri-skill/scripts/ai_estimate.py`) runs `claude -p`, and Claude Code does not pass its sign-in token to commands an agent runs, so the script sets `CLAUDE_CODE_OAUTH_TOKEN=placeholder` (the OneCLI gateway swaps in the real credential); test it in the agent image with the container's OneCLI environment, run as a shell command of an outer `claude` |
+| A session needs to tell an agent something (the CLI chat is dropped as an unknown sender) | create a one-shot task for the agent group: `ncl tasks create --agent-group-id <id> --name <slug> --process-after <ISO time> --prompt "..."`, and say in the prompt where to reply (the shared #general channel, not the DM) |
 | Bridge says NOT signed in | sign in again through the ssh tunnel; do not retry in a loop |
 | Agent cannot reach a container service by name | container proxy: only `.home` bypasses the gateway; call with `trust_env=False` or use a `.home` name |
 | Scheduled task rejected as too frequent | write a gate `--script` that returns `{"wakeAgent": bool, "data": ...}` instead of overriding the limit |
