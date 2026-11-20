@@ -31,6 +31,16 @@ The household has up to four named people (default George). Meals, water, target
 - Maximum four people. `person add` failing with `PERSON_LIMIT_REACHED` means the limit is hit: tell the user, do not retry.
 - When replying, say whose data it is if it is not George.
 
+## Logging food: use resolve-items
+
+For anything the user says they ate or drank, log it with `resolve-items` (`/nutri_log_meal`), not by searching `/foods` or `food list` yourself. `resolve-items` searches the user's saved foods first, then the ~4.6M-row Open Food Facts table, so a food missing from the 716 saved foods is usually still found. Searching `/foods` only covers the saved foods and will wrongly report "no match".
+
+- Send one simple food name per item, with a quantity and unit: `{"name":"toast","quantity":4,"unit":"slice"}`, `{"name":"butter","quantity":10,"unit":"g"}`, `{"name":"peanut butter","quantity":20,"unit":"g"}`. Never send a composite like "toast with butter and peanut butter": it matches nothing. Split it into its parts.
+- Use plain generic names ("shredded cheddar", "sweet corn", "tortilla"), not guesses at brands.
+- If the user gives no quantity, pick a sensible one (e.g. 1 slice, 1 tbsp) and say what you assumed.
+- **The AI estimate is the last resort and needs no approval.** If an item is found in neither database, the CLI estimates it and logs it straight away, flagged `"estimated": true` with a confidence. Do not ask the user for packet values or permission first. After logging, list the estimated items clearly ("Estimated, not from a database: peri peri sauce ≈ 150 kcal") so the user can correct them with `/nutri_edit` or `/nutri_delete`.
+- Only ask the user for packet values if `estimation_failures` is returned (the estimator itself failed).
+
 ## Commands
 
 ### `/nutri_help`
@@ -161,10 +171,7 @@ Log a meal from a food, recipe, or free-text description.
 ```
 
 **Special case — AI estimate:**
-If the food/recipe is not found, ask: "I don't have '{input}' in the database. Should I estimate nutrition for '{input}' using AI?"
-- If user confirms, call text estimation model
-- Return estimated nutrition with `confidence: "low"` note
-- Still log the meal with frozen snapshot
+Prefer `/nutri_log_meal` (`resolve-items`) for named foods; it falls back to an AI estimate automatically. Use `log --estimate "…"` only when the user explicitly asks for an estimate of a whole described meal. Do not ask for confirmation first: log it, flag it as an estimate with its confidence, and let the user correct it afterwards.
 
 ---
 
@@ -176,7 +183,7 @@ Log a complete structured meal in one call. Preferred over repeated `/nutri_log`
 - `items_json`: JSON array of items, each with `name`, `quantity`, `unit`
 
 **When to use this:**
-Use `/nutri_log_meal` when the user describes a full meal with multiple components (e.g., "I had chicken breast, wholemeal bread, mayo, and lettuce for lunch"). It resolves all items in parallel, runs AI estimation only for unresolvable items, then logs everything.
+Use `/nutri_log_meal` when the user describes a full meal with multiple components (e.g., "I had chicken breast, wholemeal bread, mayo, and lettuce for lunch"). It resolves each item (saved foods, then Open Food Facts), runs an AI estimate only for items found in neither, and logs everything without asking.
 
 **Example:**
 ```
@@ -191,14 +198,15 @@ Use `/nutri_log_meal` when the user describes a full meal with multiple componen
   "logged": [
     {"name": "chicken breast", "source": "local_db", "meal_id": 42, "kcal": 247.5, "protein_g": 46.5},
     {"name": "wholemeal bread", "source": "open_food_facts", "meal_id": 43, "kcal": 162, "protein_g": 6.8},
-    {"name": "mayonnaise", "source": "ai_estimate", "meal_id": 44, "kcal": 94, "protein_g": 0.2, "confidence": "low"},
+    {"name": "mayonnaise", "source": "ai_estimate", "estimated": true, "confidence": "low", "meal_id": 44, "kcal": 94, "protein_g": 0.2},
     {"name": "lettuce", "source": "local_db", "meal_id": 45, "kcal": 15, "protein_g": 1.2}
   ]
 }
 ```
 
 **Error handling:**
-- If `estimation_failures` is present in the response, some items were not logged. Tell the user: "Could not estimate macros for: {names}. Please use `/nutri_log` to enter them manually."
+- Items with `"estimated": true` were logged from an AI estimate. Always tell the user which ones, with their confidence.
+- If `estimation_failures` is present in the response, those items were not logged (the estimator failed). Tell the user: "Could not estimate macros for: {names}. Please send the packet values." The other items in the meal were still logged.
 - Exit code 1 = network error; exit code 3 = AI estimation failure for at least one item.
 
 ---
@@ -578,14 +586,11 @@ Delete a meal log (hard delete).
 - Always show extracted data for user confirmation before logging
 
 ### AI Estimate Flow
-1. User enters `/nutri_log lunch "grilled salmon with rice"`
-2. Food "grilled salmon with rice" not found in database
-3. Skill prompts: "I don't have that food. Should I estimate nutrition using AI? Y/N"
-4. If yes:
-   - Text model estimates macros
-   - Skill displays: "Estimated: 520 kcal, 45g protein (low confidence estimate)"
-   - Meal logged with `confidence: "low"` flag
-5. If no: "Would you like to use a different food or save this as a new recipe?"
+1. User describes a meal; the skill calls `resolve-items` with one simple name per item
+2. Items found in saved foods or Open Food Facts are logged from the database
+3. Items found in neither are estimated by the text model and logged immediately (`source: ai_estimate`), with no approval step
+4. The reply lists estimated items with their confidence, e.g. "Estimated: peri peri sauce ≈ 150 kcal (low confidence)"
+5. The user can fix any of them with `/nutri_edit` or remove it with `/nutri_delete`
 
 ### Recipe Save Flow
 1. User types `/nutri_recipe save "MyRecipe" "Oats" 50 g "Greek Yogurt" 150 g`
@@ -630,7 +635,7 @@ Delete a meal log (hard delete).
 
 | Code | HTTP | Meaning | Agent action |
 |------|------|---------|--------------|
-| `FOOD_NEEDS_AI_ESTIMATE` | 404 | Not in DB or OFF | Call AI estimation, POST /meals source=ai_estimate |
+| `FOOD_NEEDS_AI_ESTIMATE` | 404 | Not in DB or OFF | Estimate and log it without asking (`resolve-items` does this); report it as estimated |
 | `NOT_FOUND` | 404 | Resource ID missing | Tell user, don't retry |
 | `VALIDATION_FAILED` | 400 | Bad fields | Check field names/types |
 | `DUPLICATE_ERROR` | 409 | Name already exists | Skip, use existing |

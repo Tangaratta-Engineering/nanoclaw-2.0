@@ -40,6 +40,18 @@ EXIT_MISSING_PREREQ = 2
 EXIT_AI_FAILURE = 3
 EXIT_FOOD_NEEDS_ESTIMATE = 4
 
+# Macro fields from an AI estimate that POST /meals accepts
+ESTIMATE_MACRO_FIELDS = (
+    "kcal",
+    "protein_g",
+    "fat_g",
+    "saturated_fat_g",
+    "carbs_g",
+    "sugar_g",
+    "sodium_mg",
+    "fibre_g",
+)
+
 
 def get_today_sydney() -> date:
     """Get today's date in Sydney timezone."""
@@ -366,24 +378,55 @@ def cmd_resolve_items(args) -> None:
                 }
             )
 
-        # Step 3: Surface not-found items (don't auto-estimate)
-        not_found = [
-            {
-                "name": item["name"],
-                "quantity": item["quantity"],
-                "unit": item["unit"],
-                "reason": item.get("reason", "Not found in local database or Open Food Facts"),
+        # Step 3: items found nowhere. The AI estimate is the last resort, so log it
+        # straight away (flagged as an estimate) rather than asking the user first.
+        estimation_failures = []
+        for item in resolve_result.get("needs_estimation", []):
+            description = f"{item['name']}, {item['quantity']} {item['unit']}"
+            try:
+                from ai_estimate import call_text_estimation
+
+                estimate = call_text_estimation(description, "")
+            except Exception as e:
+                estimation_failures.append(
+                    {
+                        "name": item["name"],
+                        "quantity": item["quantity"],
+                        "unit": item["unit"],
+                        "reason": str(e),
+                    }
+                )
+                continue
+
+            meal_payload = {
+                "meal_category": args.meal,
+                "source": "ai_estimate",
+                "free_text_description": description,
+                "display_name": item["name"],
+                "notes": f"AI estimate ({estimate.get('confidence', 'low')} confidence)",
+                **{k: v for k, v in estimate.items() if k in ESTIMATE_MACRO_FIELDS},
             }
-            for item in resolve_result.get("needs_estimation", [])
-        ]
+            meal = api_call("POST", "/meals", with_person(args, meal_payload))
+            logged_meals.append(
+                {
+                    "name": item["name"],
+                    "source": "ai_estimate",
+                    "estimated": True,
+                    "confidence": estimate.get("confidence", "low"),
+                    "meal_id": meal.get("id"),
+                    "kcal": float(meal.get("kcal", 0)),
+                    "protein_g": float(meal.get("protein_g", 0)),
+                }
+            )
 
         output_data = {
             "status": "ok",
             "meal_category": args.meal,
             "logged": logged_meals,
         }
-        if not_found:
-            output_data["not_found"] = not_found
+        if estimation_failures:
+            output_data["estimation_failures"] = estimation_failures
+            output_json(output_data, EXIT_AI_FAILURE)
         output_json(output_data)
 
     except Exception as e:
