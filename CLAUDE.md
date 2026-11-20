@@ -281,6 +281,14 @@ This project uses pnpm with `minimumReleaseAge: 4320` (3 days) in `pnpm-workspac
 - **`onlyBuiltDependencies`**: Never add packages to this list without human approval — build scripts execute arbitrary code during install.
 - **`pnpm install --frozen-lockfile`** should be used in CI, automation, and container builds. Never run bare `pnpm install` in those contexts.
 
+## Session start (read this every session)
+
+Before doing anything else in a new or cleared session:
+
+1. Read the project memory index `~/.claude/projects/<this-project>/memory/MEMORY.md` and the files it lists, at minimum `project-system-map.md`, `feedback-george-working-rules.md` and `project-open-items.md`, then any file for the area you are about to touch. They hold the private state (agent ids, people, pending work) that must not be committed.
+2. Read [docs/operations-runbook.md](docs/operations-runbook.md): working rules (worktree + PR flow, merge only on an explicit "merge #N", no secrets or personal data in git), the service map, the bridge pattern and troubleshooting.
+3. **Keep the knowledge base current.** When you change or learn something about a system, update its memory file in the same session; add a row to `docs/local-customizations.md` for each customization; before a session ends, refresh `project-open-items.md`.
+
 ## Local customizations (this fork)
 
 This install carries changes that are not upstream. **Before any `/update-nanoclaw` or `/update-skills`, read [docs/local-customizations.md](docs/local-customizations.md)** — it lists each change, its files, and exactly how to resolve it on upgrade. Never edit skill-installed channel adapters in place (`src/channels/discord.ts` etc.); they are overwritten on upgrade. Put customizations in a separate file and import it from the `src/channels/index.ts` barrel.
@@ -311,6 +319,7 @@ This install carries changes that are not upstream. **Before any `/update-nanocl
 | [docs/templates.md](docs/templates.md) | Agent templates: what they are, stamping via `ncl groups create --template` + the setup wizard, the gateway/MCP-credential model, supported providers, and how to contribute one |
 | [docs/hardened-image.md](docs/hardened-image.md) | Opt-in: pull the agent image from a registry instead of building it |
 | [docs/local-customizations.md](docs/local-customizations.md) | This fork's changes vs upstream, what to do with each on upgrade, non-git state to back up, upgrade checklist |
+| [docs/operations-runbook.md](docs/operations-runbook.md) | Day-to-day operations: session start checklist, working rules, service map, bridge pattern, troubleshooting, knowledge-base upkeep |
 
 ## Container Build Cache
 
