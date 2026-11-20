@@ -61,7 +61,7 @@ Return ONLY valid JSON (no markdown, no prose) matching this schema:
   "carbs_g": "number",
   "sugar_g": "number or null",
   "sodium_mg": "number or null",
-  "fibre_g": "number or null",
+  "fibre_g": "number (best estimate in grams, 0 if the food has none; never null)",
   "confidence": "high | medium | low"
 }
 
