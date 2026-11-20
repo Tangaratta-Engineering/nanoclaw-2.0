@@ -14,6 +14,12 @@ upstream) and the private session memory (see "Knowledge base" below). **No pers
 
 ## Working rules
 
+- **Development goes through the software orchestrator.** Any change to code, tests, skills, scripts or config files in a
+  repo is delegated to the `software-orchestrator` agent (Agent tool), which has `software-dev` write it and then verifies
+  the result independently. The main session investigates, writes the brief (worktree and branch, files, acceptance checks,
+  these rules), reviews the diff and test output against the report, runs live operations (restarts, vault, systemd), writes
+  the PR text and docs, and handles merges. It does not write the code itself. One-line operational settings and memory
+  edits stay inline.
 - **Build in a worktree**, never in the live checkout: `git worktree add ../nanoclaw-wt-<name> -b <branch>`; remove it
   afterwards (`git worktree remove`) and delete the merged branch.
 - **PRs target the fork explicitly**: `gh pr create --repo Tangaratta-Engineering/nanoclaw-2.0 ...` (plain `gh` resolves to
