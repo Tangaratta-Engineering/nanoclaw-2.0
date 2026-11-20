@@ -5,7 +5,9 @@
 // trolley, checkout or payment. No dependencies (Node 22 has fetch + WebSocket).
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
 import { ops, validate } from './ops.mjs';
+import { recoverTab } from './recover.mjs';
 
 const HOME = process.env.HOME;
 const DATA = process.env.WOOLIES_DATA || path.join(HOME, 'projects/.nanoclaw-data/woolies');
@@ -28,12 +30,10 @@ function alive(ws) {
   });
 }
 
-/** Connect to the first Woolworths tab that is actually responding. */
-async function openTab() {
+/** Connect to the first Woolworths tab that is actually responding, or null. */
+async function tryTabs() {
   const targets = await (await fetch(`${CDP}/json`)).json();
-  const pages = targets.filter((x) => x.type === 'page' && x.url.includes('woolworths.com.au'));
-  if (!pages.length) throw new Error('no Woolworths tab is open in the server Chrome');
-  for (const t of pages) {
+  for (const t of targets.filter((x) => x.type === 'page' && x.url.includes('woolworths.com.au'))) {
     const ws = new WebSocket(t.webSocketDebuggerUrl);
     try {
       await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('cannot reach the server Chrome')); });
@@ -42,7 +42,24 @@ async function openTab() {
     } catch { /* try the next tab */ }
     try { ws.close(); } catch { /* ignore */ }
   }
-  throw new Error('every Woolworths tab in the server Chrome is frozen: close or reload them');
+  return null;
+}
+
+let lastRestart = 0;
+function restartChrome() {
+  lastRestart = Date.now();
+  return new Promise((res, rej) => execFile('systemctl', ['--user', 'restart', 'woolies-chrome'], (e) => (e ? rej(e) : res())));
+}
+
+/** A live tab; a frozen or missing one is replaced, and if that fails the server Chrome is restarted. */
+async function openTab() {
+  const ws = await tryTabs();
+  if (ws) return ws;
+  return recoverTab({
+    cdp: CDP, tryTabs, restartChrome, log,
+    canRestart: () => Date.now() - lastRestart > 10 * 60_000,
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  });
 }
 
 async function inPage(fn, arg) {
@@ -99,3 +116,10 @@ async function sweep() {
 
 log('woolies bridge up; queue', QUEUE);
 setInterval(sweep, 700);
+
+// Nightly recycle while idle: a Chrome renderer left running for weeks bloats and eventually hangs.
+setInterval(() => {
+  if (busy || new Date().getHours() !== 3 || Date.now() - lastRestart < 6 * 3600_000) return;
+  log('nightly restart of the server Chrome');
+  restartChrome().catch((e) => log('nightly restart failed', e.message));
+}, 10 * 60_000);
