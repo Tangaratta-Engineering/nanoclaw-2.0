@@ -2,6 +2,9 @@
 // "Submit claim" screens by clicking what a person would click. No dependencies (Node 22 has fetch + WebSocket).
 // Peoplecare's access token lasts 30 minutes and the site renews it while the page is in use, so a keep-alive
 // touches the page every 10 minutes. Deep links do not work on this site: always start from Home.
+import { execFile } from 'node:child_process';
+import { recoverTab } from './recover.mjs';
+
 export const SITE = 'oms.peoplecare.com.au';
 
 class Cdp {
@@ -22,14 +25,38 @@ class Cdp {
   close() { try { this.ws.close(); } catch { /* ignore */ } }
 }
 
-export function makeBrowser({ cdp = process.env.CLAIMS_CDP || 'http://127.0.0.1:9223', sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
-  async function open() {
+export function makeBrowser({
+  cdp = process.env.CLAIMS_CDP || 'http://127.0.0.1:9223',
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  restartChrome = () => new Promise((res, rej) => execFile('systemctl', ['--user', 'restart', 'claims-chrome'], (e) => (e ? rej(e) : res()))),
+  log = console.log,
+} = {}) {
+  let lastRestart = 0;
+  /** A connection to the first Peoplecare tab that answers a trivial request within 4 s, or null (a frozen tab never answers). */
+  async function tryTabs() {
     const tabs = await (await fetch(`${cdp}/json`)).json();
-    const t = tabs.find((x) => x.type === 'page' && x.url.includes(SITE));
-    if (!t) throw new Error('no Peoplecare tab is open in the claims Chrome: George needs to sign in again');
-    const ws = new WebSocket(t.webSocketDebuggerUrl);
-    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('cannot reach the claims Chrome')); });
-    return new Cdp(ws);
+    for (const t of tabs.filter((x) => x.type === 'page' && x.url.includes(SITE))) {
+      const ws = new WebSocket(t.webSocketDebuggerUrl);
+      try {
+        await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('cannot reach the claims Chrome')); });
+        const c = new Cdp(ws);
+        const ok = await Promise.race([c.eval(() => 1).then(() => true), sleep(4000).then(() => false)]).catch(() => false);
+        if (ok) return c;
+        log('skipping a frozen Peoplecare tab:', t.url.slice(0, 60));
+      } catch { /* try the next tab */ }
+      try { ws.close(); } catch { /* ignore */ }
+    }
+    return null;
+  }
+  /** A live tab; a frozen or missing one is replaced, and if that fails the claims Chrome is restarted (at most once per 10 min). */
+  async function open() {
+    const c = await tryTabs();
+    if (c) return c;
+    return recoverTab({
+      cdp, site: SITE, tryTabs, log, sleep,
+      restartChrome: () => { lastRestart = Date.now(); return restartChrome(); },
+      canRestart: () => Date.now() - lastRestart > 10 * 60_000,
+    });
   }
   const where = (c) => c.eval(() => ({ path: location.pathname, text: document.body ? document.body.innerText : '' }));
   async function waitPath(c, want, ms = 20000) {
