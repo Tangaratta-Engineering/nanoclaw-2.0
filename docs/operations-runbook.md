@@ -67,6 +67,7 @@ profile holds the owner's login. Rules:
 |---|---|
 | An agent says a bridge "isn't set up" or gets no answer | unit active? `journalctl --user -u <unit>`; queue folder exists; Chrome unit active; owner still signed in |
 | Woolworths bridge says every tab is "frozen" | the bridge now replaces the tab, then restarts `woolies-chrome` itself (log: "recovered"). By hand: `systemctl --user restart woolies-chrome` (profile and sign-in survive); a hung renderer is shared by all tabs, so closing the tab alone does not help |
+| Claims bridge says the Peoplecare tab is "frozen" | same as Woolworths: it replaces the tab (on Home), then restarts `claims-chrome` itself (max once per 10 min; log: "recovered"). By hand: `systemctl --user restart claims-chrome`; if that loses the Peoplecare login, sign in again with MFA. A claim part-way through is lost on a restart (submit then says to prepare again) |
 | Bridge says NOT signed in | sign in again through the ssh tunnel; do not retry in a loop |
 | Agent cannot reach a container service by name | container proxy: only `.home` bypasses the gateway; call with `trust_env=False` or use a `.home` name |
 | Scheduled task rejected as too frequent | write a gate `--script` that returns `{"wakeAgent": bool, "data": ...}` instead of overriding the limit |

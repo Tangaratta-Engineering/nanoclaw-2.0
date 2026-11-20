@@ -105,3 +105,42 @@ test('only PDFs inside the claims folder can be uploaded', { skip: !up && 'hp-db
   await assert.rejects(ops['claim.add']({ ...base, pdf: 'fake.pdf' }), /not a PDF/);
   await assert.rejects(ops['claim.add']({ ...base, pdf: 'missing.pdf' }), /does not exist/);
 });
+
+import { recoverTab } from './recover.mjs';
+
+function recoverDeps({ liveAfterReplace, liveAfterRestart, canRestart = true }) {
+  const calls = [];
+  let state = 'frozen';
+  const fetchFn = async (url, opts) => {
+    calls.push(opts?.method === 'PUT' ? 'new:' + url.split('/json/new?')[1] : url.includes('/close/') ? 'close' : 'list');
+    if (opts?.method === 'PUT' && liveAfterReplace) state = 'live';
+    return { json: async () => [{ id: 'A', type: 'page', url: 'https://oms.peoplecare.com.au/home' }] };
+  };
+  return {
+    calls,
+    deps: {
+      cdp: 'http://x', site: 'oms.peoplecare.com.au', fetchFn, sleep: async () => {}, canRestart: () => canRestart,
+      tryTabs: async () => (state === 'live' ? 'conn' : null),
+      restartChrome: async () => { calls.push('restart'); if (liveAfterRestart) state = 'live'; },
+    },
+  };
+}
+
+test('recoverTab replaces a frozen tab on Home without restarting Chrome when that is enough', async () => {
+  const { deps, calls } = recoverDeps({ liveAfterReplace: true });
+  assert.equal(await recoverTab(deps), 'conn');
+  assert.deepEqual(calls, ['list', 'close', 'new:https://oms.peoplecare.com.au/']);
+});
+
+test('recoverTab restarts Chrome when a replacement tab is frozen too', async () => {
+  const { deps, calls } = recoverDeps({ liveAfterRestart: true });
+  assert.equal(await recoverTab(deps), 'conn');
+  assert.ok(calls.includes('restart'));
+});
+
+test('recoverTab does not restart Chrome again within the cool-down, and fails if nothing helps', async () => {
+  const a = recoverDeps({ canRestart: false });
+  await assert.rejects(recoverTab(a.deps), /restarted recently/);
+  assert.ok(!a.calls.includes('restart'));
+  await assert.rejects(recoverTab(recoverDeps({}).deps), /did not bring it back/);
+});
