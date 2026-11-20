@@ -31,10 +31,23 @@ import { SpokenLog } from './echo.ts';
 import { splitForSpeech, stripEndWord, fillerFor, addressees, isLeadIn, isNoise, shouldBargeIn, isPromptEcho, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
 import { transcribe } from './stt.ts';
 import { SendGate } from './gate.ts';
+import { ClipVad, DEFAULT_VAD, NoiseFloor, frameRms, pcmMs } from './vad.ts';
 import { GoogleTtsWorker, Speaker, TtsWorker } from './tts.ts';
 
 const MIN_SECS = 0.5;
 const MIN_RMS = 0.005;
+// Ending a clip from the audio itself (see vad.ts): in a noisy place Discord keeps sending packets, so waiting for them to stop never ends a clip.
+const NOISE_GATE = process.env.VOICE_NOISE_GATE !== '0'; // 0 = the old behaviour: the clip ends only when Discord stops sending
+const VAD = {
+  ...DEFAULT_VAD,
+  silenceMs: 1300,
+  minVoiceRms: Number(process.env.VOICE_VOICE_RMS ?? DEFAULT_VAD.minVoiceRms),
+  floorMult: Number(process.env.VOICE_FLOOR_MULT ?? DEFAULT_VAD.floorMult),
+  startVoicedMs: Number(process.env.VOICE_START_MS ?? DEFAULT_VAD.startVoicedMs),
+};
+const KEEP_TAIL_MS = 300; // of the quiet after speech, kept for the transcriber
+const APOLOGY_MIN_SPEECH_MS = 1500; // say "I didn't catch that" only when there was this much to catch
+const APOLOGY_GAP_MS = 20_000;
 const SILENCE_MS = 1300; // let a thought finish before cutting the clip
 const MAX_SPOKEN_PER_TURN = 2; // agent messages spoken per turn (a quick acknowledgement, then the answer); the rest stay as text
 const BARGE_IN_WORDS = Number(process.env.VOICE_BARGE_IN_WORDS ?? '4'); // he speaks over her with at least this many words: she stops and listens (0 = she always finishes first)
@@ -177,15 +190,16 @@ outbox.onText = (text) => {
 };
 
 /** Caller has already called gate.transcribeStart(); this ends it. */
-async function handleUtterance(pcm: Buffer): Promise<void> {
+async function handleUtterance(pcm: Buffer, speechMs: number): Promise<void> {
   try {
-    await processUtterance(pcm);
+    await processUtterance(pcm, speechMs);
   } finally {
     gate.transcribeEnd(); // restarts the wait now that this clip has been dealt with
   }
 }
 
-async function processUtterance(pcm: Buffer): Promise<void> {
+let lastApology = 0;
+async function processUtterance(pcm: Buffer, speechMs: number): Promise<void> {
   const samples = toMono16k(pcm);
   if (durationSecs(samples) < MIN_SECS || rms(samples) < MIN_RMS) return;
   const t0 = Date.now();
@@ -228,8 +242,13 @@ async function processUtterance(pcm: Buffer): Promise<void> {
     return;
   }
   if (reliability === 'poor') {
-    speechQueue.push("Sorry, I didn't catch that. Could you say it again?");
-    void drainSpeech();
+    if (speechMs >= APOLOGY_MIN_SPEECH_MS && Date.now() - lastApology > APOLOGY_GAP_MS) {
+      lastApology = Date.now();
+      speechQueue.push("Sorry, I didn't catch that. Could you say it again?");
+      void drainSpeech();
+    } else {
+      log(`ignored: unclear audio with only ${(speechMs / 1000).toFixed(1)}s of speech, no apology`);
+    }
     return;
   }
   if (wasBusy && shouldBargeIn(text, BARGE_IN_WORDS)) {
@@ -277,27 +296,66 @@ const georgeState = () => guild.voiceStates.cache.get(cfg.userId);
 const georgeInChannel = () => georgeState()?.channelId === cfg.channelId;
 const alive = () => !!connection && connection.state.status !== VoiceConnectionStatus.Destroyed;
 
+const noiseFloor = new NoiseFloor();
+let noiseDrops = 0;
+let lastNoiseLog = 0;
+
 function listen(conn: VoiceConnection): void {
   const active = new Set<string>();
-  conn.receiver.speaking.on('start', (userId) => {
+  const capture = (userId: string): void => {
     if (userId !== cfg.userId || asleep || active.has(userId)) return;
     active.add(userId);
-    gate.captureStart(); // he is talking again: nothing is sent until this clip is transcribed
+    if (!NOISE_GATE) gate.captureStart(); // he is talking again: nothing is sent until this clip is transcribed
     const opus = conn.receiver.subscribe(userId, { end: { behavior: EndBehaviorType.AfterSilence, duration: SILENCE_MS } });
     const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
     const chunks: Buffer[] = [];
+    const vad = new ClipVad(VAD, noiseFloor);
+    let gateHeld = !NOISE_GATE; // the send gate has been told he is talking
+    let early: string | null = null;
     opus.pipe(decoder);
-    decoder.on('data', (c: Buffer) => chunks.push(c));
+    decoder.on('data', (c: Buffer) => {
+      chunks.push(c);
+      if (!NOISE_GATE || early) return;
+      const ev = vad.push(frameRms(c), pcmMs(c));
+      if (ev === 'speech-start') {
+        gate.captureStart(); // real speech, not background noise: now nothing is sent until the clip is transcribed
+        gateHeld = true;
+      } else if (ev === 'end-speech' || ev === 'end-noise') {
+        early = ev; // quiet (or never anything but noise) while Discord is still sending packets: end the clip ourselves
+        opus.unpipe(decoder);
+        opus.destroy();
+        decoder.end();
+      }
+    });
     decoder.on('end', () => {
       if (!active.delete(userId)) return; // already handled by the error path
-      gate.transcribeStart(); // before captureEnd, so there is no gap in which the wait could restart
-      gate.captureEnd();
-      handleUtterance(Buffer.concat(chunks)).catch((e) => log('utterance error', String(e).slice(0, 200)));
+      const stillSending = conn.receiver.speaking.users.has(userId);
+      if (NOISE_GATE && !gateHeld) {
+        noiseDrops++;
+        if (Date.now() - lastNoiseLog > 30_000) {
+          log(`background noise ignored (${noiseDrops} clips so far; floor ${noiseFloor.value.toFixed(4)})`);
+          lastNoiseLog = Date.now();
+        }
+      } else {
+        if (NOISE_GATE) {
+          let trim = vad.trailingQuietMs - KEEP_TAIL_MS; // the quiet at the end is not worth transcribing
+          while (trim >= 20 && chunks.length > 1) {
+            trim -= pcmMs(chunks.pop()!);
+          }
+          log(`clip: ${(vad.ageMs / 1000).toFixed(1)}s, speech ${(vad.voicedMs / 1000).toFixed(1)}s, floor ${noiseFloor.value.toFixed(4)}, ended by ${early ?? 'silence'}`);
+        }
+        gate.transcribeStart(); // before captureEnd, so there is no gap in which the wait could restart
+        gate.captureEnd();
+        handleUtterance(Buffer.concat(chunks), NOISE_GATE ? vad.voicedMs : Number.MAX_SAFE_INTEGER).catch((e) => log('utterance error', String(e).slice(0, 200)));
+      }
+      // Discord only announces "started speaking" after a pause in packets, so if it is still sending (noise, or more speech) listen again now.
+      if (early && stillSending) capture(userId);
     });
     opus.on('error', () => {
-      if (active.delete(userId)) gate.captureEnd();
+      if (active.delete(userId) && gateHeld) gate.captureEnd();
     });
-  });
+  };
+  conn.receiver.speaking.on('start', capture);
 }
 
 async function join(): Promise<void> {
