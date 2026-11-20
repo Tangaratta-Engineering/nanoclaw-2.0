@@ -85,6 +85,24 @@ Available commands:
 
 ---
 
+### Key metrics: calories, protein and fibre
+
+George tracks **calories, protein and fibre** most closely. `summary`, `today` and `week` return a `key_metrics` object (per day for `week`) with those three. Lead every report with them, then fat and carbs only if asked:
+
+```json
+"key_metrics": {
+  "kcal":      {"actual": 1613.75, "target": 2200, "remaining": 586.25, "at_least": false},
+  "protein_g": {"actual": 79.2,    "target": 150,  "remaining": 70.8,   "at_least": false},
+  "fibre_g":   {"actual": 10,      "target": 30,   "remaining": 20,     "at_least": true},
+  "fibre_entries_missing": 7
+}
+```
+
+- `remaining` is target minus actual (negative once exceeded); `target`/`remaining` are `null` when no goal is set. Say so instead of inventing a goal.
+- **Fibre is often a lower bound.** Many entries have no fibre data. When `fibre_g.at_least` is true, say "at least 10 g fibre (7 entries have no fibre data)", never a bare "10 g". An entry with no data is not 0 g.
+- `today` lists each entry with its `fibre_g` (`null` = no data), so you can show which items are missing it.
+- Only claim someone has hit a fibre target if `at_least` is false or the lower bound already exceeds it.
+
 ### `/nutri_summary`
 Get today's nutrition summary: total kcal, macros, meal count, water intake.
 
@@ -511,6 +529,7 @@ Show current daily nutrition target.
   "effective_from": "2026-05-01",
   "kcal_target": 2500,
   "protein_g_target": 120,
+  "fibre_g_target": 30,
   "fat_g_target": null,
   "carbs_g_target": null
 }
@@ -518,12 +537,13 @@ Show current daily nutrition target.
 
 ---
 
-### `/nutri_target set <kcal> [protein_g] [fat_g] [carbs_g]`
-Set or update daily nutrition target.
+### `/nutri_target set [--kcal N] [--protein N] [--fibre N] [--fat N] [--carbs N]`
+Set or update daily nutrition targets. Only the values you pass change; the rest keep their current value (so `--fibre 30` alone is fine). `--kcal` is required only when no target exists yet.
 
-**Example:**
+**Examples:**
 ```
-/nutri_target set 2300 130 75 280
+/nutri_target set --kcal 2300 --protein 130 --fibre 30
+/nutri_target set --fibre 35
 ```
 
 **Response:**
@@ -532,28 +552,24 @@ Set or update daily nutrition target.
   "status": "set",
   "effective_from": "2026-05-12",
   "kcal_target": 2300,
-  "protein_g_target": 130
+  "protein_g_target": 130,
+  "fibre_g_target": 30
 }
 ```
 
 ---
 
-### `/nutri_edit <meal_id> <field> <new_value>`
-Edit a specific meal's macros (e.g., if manual correction needed).
+### `/nutri_edit <meal_id> [--kcal N] [--protein N] [--fat N] [--carbs N] [--fibre N] [--servings N] [--meal CATEGORY] [--notes TEXT]`
+Correct a logged meal. Only the fields you pass change; `0` is a valid value (e.g. `--fibre 0`). The CLI command is `nutri_cli.py edit <meal_id> ...`.
+
+**When correcting an entry from a label, update fibre too.** Fibre is one of George's three key metrics, and an old fibre value stays on the entry unless you change it: pass `--fibre` with the label figure for the quantity eaten (per-100 g value x grams / 100). Do not leave a stale fibre figure and tell the user the tool can't change it.
 
 **Example:**
 ```
-/nutri_edit meal_abc123 kcal 250
+python3 scripts/nutri_cli.py edit 58 --kcal 29 --protein 0.7 --fat 0.7 --carbs 5 --fibre 2.7
 ```
 
-**Response:**
-```json
-{
-  "status": "updated",
-  "meal_id": "meal_abc123",
-  "kcal": 250
-}
-```
+**Response:** the updated meal (`id`, `display_name`, `kcal`, `protein_g`, `fat_g`, `carbs_g`, `fibre_g`, ...).
 
 ---
 

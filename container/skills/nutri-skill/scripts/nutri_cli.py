@@ -848,15 +848,33 @@ def cmd_target_show(args) -> None:
 
 
 def cmd_target_set(args) -> None:
-    """Set daily calorie target."""
+    """Set daily targets. Fields not given keep their current value."""
     try:
-        payload = {"kcal_target": float(args.kcal)}
-        if args.protein:
-            payload["protein_g_target"] = float(args.protein)
-        if args.fat:
-            payload["fat_g_target"] = float(args.fat)
-        if args.carbs:
-            payload["carbs_g_target"] = float(args.carbs)
+        # POST /targets replaces the whole row, so start from the active target
+        # (if any) and only override what was passed.
+        current = {}
+        try:
+            current = api_call("GET", "/targets/active", params=with_person(args)) or {}
+        except SystemExit:
+            raise
+        except Exception:
+            current = {}  # no target yet
+
+        fields = {
+            "kcal_target": args.kcal,
+            "protein_g_target": args.protein,
+            "fat_g_target": args.fat,
+            "carbs_g_target": args.carbs,
+            "fibre_g_target": args.fibre,
+        }
+        payload = {}
+        for name, value in fields.items():
+            if value is not None:
+                payload[name] = float(value)
+            elif current.get(name) is not None:
+                payload[name] = float(current[name])
+        if "kcal_target" not in payload:
+            error_json("--kcal is required when no target exists yet", "MISSING_KCAL")
 
         target = api_call("POST", "/targets", with_person(args, payload))
         output_json(target)
@@ -866,23 +884,27 @@ def cmd_target_set(args) -> None:
 
 
 def cmd_edit(args) -> None:
-    """Edit a meal log entry."""
+    """Edit a meal log entry. Only the fields passed are changed (0 is a valid value)."""
     try:
         payload = {}
-        if args.servings:
+        if args.servings is not None:
             payload["servings"] = float(args.servings)
         if args.meal:
             payload["meal_category"] = args.meal
-        if args.kcal:
-            payload["kcal"] = float(args.kcal)
-        if args.protein:
-            payload["protein_g"] = float(args.protein)
-        if args.fat:
-            payload["fat_g"] = float(args.fat)
-        if args.carbs:
-            payload["carbs_g"] = float(args.carbs)
+        for arg, field in (
+            ("kcal", "kcal"),
+            ("protein", "protein_g"),
+            ("fat", "fat_g"),
+            ("carbs", "carbs_g"),
+            ("fibre", "fibre_g"),
+        ):
+            value = getattr(args, arg)
+            if value is not None:
+                payload[field] = float(value)
         if args.notes:
             payload["notes"] = args.notes
+        if not payload:
+            error_json("Nothing to change: pass at least one field", "NO_CHANGES")
 
         meal = api_call("PATCH", f"/meals/{args.log_id}", payload)
         output_json(meal)
@@ -1154,8 +1176,9 @@ def main():
     target_set = target_subparsers.add_parser(
         "set", help="Set target", parents=[person_parent]
     )
-    target_set.add_argument("--kcal", required=True, type=float)
+    target_set.add_argument("--kcal", type=float)
     target_set.add_argument("--protein", type=float)
+    target_set.add_argument("--fibre", type=float)
     target_set.add_argument("--fat", type=float)
     target_set.add_argument("--carbs", type=float)
     target_set.set_defaults(func=cmd_target_set)
@@ -1171,6 +1194,7 @@ def main():
     edit_parser.add_argument("--protein", type=float)
     edit_parser.add_argument("--fat", type=float)
     edit_parser.add_argument("--carbs", type=float)
+    edit_parser.add_argument("--fibre", type=float)
     edit_parser.add_argument("--notes")
     edit_parser.set_defaults(func=cmd_edit)
 
