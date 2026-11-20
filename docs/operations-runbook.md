@@ -14,12 +14,18 @@ upstream) and the private session memory (see "Knowledge base" below). **No pers
 
 ## Working rules
 
-- **Development goes through the software orchestrator.** Any change to code, tests, skills, scripts or config files in a
-  repo is delegated to the `software-orchestrator` agent (Agent tool), which has `software-dev` write it and then verifies
-  the result independently. The main session investigates, writes the brief (worktree and branch, files, acceptance checks,
-  these rules), reviews the diff and test output against the report, runs live operations (restarts, vault, systemd), writes
-  the PR text and docs, and handles merges. It does not write the code itself. One-line operational settings and memory
-  edits stay inline.
+- **Development goes through the software orchestrator.** Changes to files tracked in a git repo (code, tests, skills,
+  scripts, config files that ship in the repo) are delegated to the `software-orchestrator` agent (Agent tool), which has
+  `software-dev` write them and then verifies the result independently. The main session writes the brief (worktree and
+  branch, files, acceptance checks, these rules), runs live operations, writes the PR text and handles merges; it does not
+  write the code itself. Not delegated: live host settings outside git (systemd drop-ins, env values, OneCLI vault entries,
+  service restarts), private memory notes, read-only investigation, and docs-only changes (the main session may write those
+  itself).
+  - **Verify before the PR.** The main session re-runs the relevant tests and reads the actual diff itself. If the
+    orchestrator's report and the diff or test output disagree, it sends the work back to the orchestrator with the
+    discrepancy and does not open the PR until they agree.
+  - **Fallback.** If the orchestrator is unavailable (for example a Remote Control phone session, the agent type is not
+    offered, or it fails), tell the owner and ask whether to proceed inline. Never silently skip the rule, and never stall.
 - **Build in a worktree**, never in the live checkout: `git worktree add ../nanoclaw-wt-<name> -b <branch>`; remove it
   afterwards (`git worktree remove`) and delete the merged branch.
 - **PRs target the fork explicitly**: `gh pr create --repo Tangaratta-Engineering/nanoclaw-2.0 ...` (plain `gh` resolves to
