@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Cheap gate for the scheduled claims pickup: wakes the agent only when a NEW email that looks like a paid invoice
+with a PDF has arrived. One Gmail list call, no reading. Prints {"wakeAgent": bool, "data": {...}}.
+The first run only records what is already there, so old invoices are never replayed."""
+import json
+import os
+import sys
+import urllib.parse
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "inbox-triage", "scripts"))
+import inbox_gmail as g  # noqa: E402
+
+STATE = os.environ.get("CLAIMS_SEEN", "/workspace/projects/.nanoclaw-data/claims/seen-emails.json")
+QUERY = os.environ.get("CLAIMS_QUERY", "in:inbox has:attachment filename:pdf newer_than:3d (invoice OR receipt)")
+
+
+def check(call=g.call, state=STATE, query=QUERY):
+    try:
+        r = call("GET", f"/messages?maxResults=50&q={urllib.parse.quote(query)}")
+    except Exception as e:  # noqa: BLE001
+        return {"wakeAgent": False, "data": {"error": str(e)[:200]}}
+    ids = [m["id"] for m in r.get("messages", [])]
+    first = not os.path.exists(state)
+    seen = set()
+    if not first:
+        with open(state) as f:
+            seen = set(json.load(f))
+    new = [i for i in ids if i not in seen]
+    os.makedirs(os.path.dirname(state), exist_ok=True)
+    with open(state, "w") as f:
+        json.dump(sorted(seen | set(ids))[-500:], f)
+    if first:
+        return {"wakeAgent": False, "data": {"baseline": len(ids)}}
+    return {"wakeAgent": bool(new), "data": {"new_email_ids": new}}
+
+
+if __name__ == "__main__":
+    print(json.dumps(check()))
