@@ -105,6 +105,7 @@ export function makeBrowser({ cdp = process.env.CLAIMS_CDP || 'http://127.0.0.1:
       await sleep(400);
       await clickButton(c, 'Next');
       w = await waitPath(c, '/addclaim/summary');
+      for (let i = 0; i < 25 && !w.text.includes(reference); i++) { await sleep(400); w = await where(c); }  // the page renders after the route changes
       if (!w.text.includes(reference)) throw new Error('the Review page does not show the reference: not continuing');
       const member = (w.text.match(/MEMBER NUMBER\s*\n?\s*(\d+)/i) || [])[1];
       return { page: '/addclaim/summary', member_number: member || null, reference, receipts: files.length };
