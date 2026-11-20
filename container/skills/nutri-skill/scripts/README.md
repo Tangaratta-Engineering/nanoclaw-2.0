@@ -360,7 +360,7 @@ Delete a food (soft delete).
 ## Photo OCR
 
 ### `photo --meal <category> --image-path <path>` OR `photo --meal <category> --image-base64 <data>`
-Extract nutrition from a food label photo using OpenRouter vision model.
+Extract nutrition from a food label photo. Claude (the `claude` CLI in the container, signed in through the OneCLI gateway) reads the image; no API key is needed.
 
 **Example:**
 ```bash
