@@ -13,8 +13,8 @@ GOOD = json.dumps({"product_name": "Toast", "serving_type": "per_serving", "kcal
 
 
 def fake(result, rc=0, is_error=False, stderr=""):
-    def run(cmd, input=None, cwd=None, **kw):
-        run.cmd, run.input, run.cwd = cmd, input, cwd
+    def run(cmd, input=None, cwd=None, env=None, **kw):
+        run.cmd, run.input, run.cwd, run.env = cmd, input, cwd, env or {}
         run.files = sorted(os.listdir(cwd)) if cwd and os.path.isdir(cwd) else []
         return subprocess.CompletedProcess(cmd, rc, stdout=json.dumps({"type": "result", "is_error": is_error, "result": result}), stderr=stderr)
     return run
@@ -37,6 +37,22 @@ class Estimate(unittest.TestCase):
         self.assertEqual(run.files, ["label.png"])
         self.assertEqual(run.cmd[run.cmd.index("--tools") + 1], "Read")
         self.assertIn("./label.png", run.input)
+
+    def test_a_placeholder_sign_in_is_supplied_when_the_shell_has_none(self):
+        saved = {k: os.environ.pop(k, None) for k in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+        try:
+            run = fake(GOOD)
+            a.call_text_estimation("x", runner=run)
+            self.assertEqual(run.env.get("CLAUDE_CODE_OAUTH_TOKEN"), a.PLACEHOLDER)
+            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = "already-set"
+            run2 = fake(GOOD)
+            a.call_text_estimation("x", runner=run2)
+            self.assertEqual(run2.env.get("CLAUDE_CODE_OAUTH_TOKEN"), "already-set")  # an existing one is never replaced
+        finally:
+            os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+            for k, v in saved.items():
+                if v is not None:
+                    os.environ[k] = v
 
     def test_sign_in_failure_names_the_cause(self):
         run = fake("Invalid API key · Please run /login", rc=1, is_error=True)

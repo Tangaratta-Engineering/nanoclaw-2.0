@@ -13,6 +13,9 @@ from typing import Any, Callable, Dict
 
 MODEL = os.environ.get("NUTRI_CLAUDE_MODEL", "claude-haiku-5-5")
 SYSTEM = "You extract nutrition data. Reply with only the JSON object asked for: no markdown, no prose."
+# Claude Code does not pass its sign-in placeholder on to the commands an agent runs, so a `claude -p` started from a
+# shell command would say "Not logged in". Any value works: the OneCLI gateway swaps in the real credential on the wire.
+PLACEHOLDER = "placeholder"
 AUTH_HINT = " (Claude could not sign in from this container: the OneCLI gateway's Claude credential is missing or expired, ask George)"
 
 
@@ -79,7 +82,10 @@ def _claude(prompt: str, image: bytes = b"", timeout: int = 150, runner: Callabl
         else:
             cmd += ["--tools", ""]
         try:
-            r = runner(cmd, input=prompt, cwd=d, capture_output=True, text=True, timeout=timeout)
+            env = dict(os.environ)
+            if not env.get("CLAUDE_CODE_OAUTH_TOKEN") and not env.get("ANTHROPIC_API_KEY") and not env.get("ANTHROPIC_AUTH_TOKEN"):
+                env["CLAUDE_CODE_OAUTH_TOKEN"] = PLACEHOLDER
+            r = runner(cmd, input=prompt, cwd=d, env=env, capture_output=True, text=True, timeout=timeout)
         except subprocess.TimeoutExpired:
             raise EstimateError("Claude took too long to answer")
         except FileNotFoundError:
