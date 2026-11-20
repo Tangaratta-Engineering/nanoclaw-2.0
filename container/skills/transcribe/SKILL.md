@@ -21,7 +21,8 @@ Do you have access to my email? ...
 
 1. **Groq Whisper** (default): `whisper-large-v3`, about 0.3–1 s for a typical voice note. The API key lives in the OneCLI vault and is injected by the gateway — never ask for it. Audio is sent to Groq; for anything George marks private use `--engine local`.
 2. **Cross-check**: every cloud result is compared with `whisper-large-v3-turbo` (run without the name hints). If the two disagree, the result is rated `uncertain` and the alternative is printed. One model's own confidence cannot catch a confident-but-wrong transcript; disagreement can.
-3. **Local fallback**: if Groq is unreachable, rate-limited or errors, the local faster-whisper `small` model runs offline (about 1.6× the audio length on this server) and a `note:` says so.
+3. **Google (opt-in, live calls only)**: `--engine google` uses Google Cloud Speech-to-Text v1 (WAV only, key injected by the vault for `speech.googleapis.com`). The voice service selects it with `VOICE_STT=google`; agents' voice notes stay on Groq. Any failure, a non-WAV file, or the monthly limit (`STT_GOOGLE_MAX_MINUTES`, default 300 billed minutes, counted in `stt-google-usage.json`) falls back to Groq, then local, with a `note:`. Measured 2026-11-20: about 2 s per clip versus 0.3 s for Groq.
+4. **Local fallback**: if Groq is unreachable, rate-limited or errors, the local faster-whisper `small` model runs offline (about 1.6× the audio length on this server) and a `note:` says so.
 
 ## Reliability
 

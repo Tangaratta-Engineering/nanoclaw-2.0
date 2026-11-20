@@ -6,7 +6,7 @@ OneCLI gateway, never seen here) -> local faster-whisper on CPU (offline fallbac
 Every result carries a reliability assessment so callers can say "I'm not sure"
 instead of presenting a bad transcript as fact.
 
-Usage: transcribe <audio-or-video-file> [--engine auto|cloud|local] [--language xx]
+Usage: transcribe <audio-or-video-file> [--engine auto|cloud|local|google] [--language xx]
                   [--translate] [--timestamps] [--json] [--model small]
 """
 import argparse
@@ -20,6 +20,8 @@ import time
 
 HOME = os.environ.get("WHISPER_HOME", "/workspace/projects/.nanoclaw-tools/whisper")
 sys.path.insert(0, os.path.join(HOME, "site"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import google_stt
 MODELS = os.path.join(HOME, "models")
 HERE = os.path.dirname(os.path.abspath(__file__))
 GROQ_BASE = "https://api.groq.com/openai/v1/audio"
@@ -135,7 +137,7 @@ def finish(res, started, notes):
 def main():
     ap = argparse.ArgumentParser(description="Transcribe speech to text (cloud first, local fallback).")
     ap.add_argument("audio", nargs="?", help="audio or video file (ogg/opus, mp3, m4a, wav, webm, mp4, ...)")
-    ap.add_argument("--engine", choices=["auto", "cloud", "local"], default=os.environ.get("TRANSCRIBE_ENGINE", "auto"))
+    ap.add_argument("--engine", choices=["auto", "cloud", "local", "google"], default=os.environ.get("TRANSCRIBE_ENGINE", "auto"))
     ap.add_argument("--model", default=os.environ.get("WHISPER_MODEL", "small"),
                     help="local model: tiny|base|small|medium (default small)")
     ap.add_argument("--language", help="ISO code such as en, es, zh; default: auto-detect")
@@ -160,7 +162,17 @@ def main():
         return 2
 
     started, notes, res = time.time(), [], None
-    if args.engine in ("auto", "cloud"):
+    if args.engine == "google":
+        # Opt-in (voice calls, VOICE_STT=google). Any failure or the monthly limit falls back to Groq, then local.
+        try:
+            res = finish(google_stt.transcribe(args.audio, args.language, google_stt.phrases(vocabulary())), started, notes)
+            res["quality"], issue = google_stt.confidence_quality(res.get("confidence"), res["quality"])
+            if issue:
+                res["issues"].append(issue)
+        except google_stt.Unavailable as e:
+            notes.append(f"Google engine unavailable ({e}); used Groq")
+            args.engine = "auto"
+    if res is None and args.engine in ("auto", "cloud"):
         try:
             res = finish(cloud(args.audio, CLOUD_PRIMARY, args.language, args.translate), started, notes)
             # Always cross-check with the second Groq model (about 0.3 s), WITHOUT the name-hint

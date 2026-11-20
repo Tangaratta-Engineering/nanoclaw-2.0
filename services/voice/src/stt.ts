@@ -14,7 +14,7 @@ export interface Transcript {
   reliability: string;
 }
 
-/** Transcribe via the transcribe skill, with Groq's key injected by the OneCLI gateway. */
+/** Transcribe via the transcribe skill, with the Groq / Google key injected by the OneCLI gateway. VOICE_STT picks the engine. */
 export async function transcribe(cfg: Config, samples: Int16Array): Promise<Transcript> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-'));
   const file = path.join(dir, 'utt.wav');
@@ -22,8 +22,12 @@ export async function transcribe(cfg: Config, samples: Int16Array): Promise<Tran
   try {
     const { stdout } = await run(
       'onecli',
-      ['run', '--agent', cfg.onecliAgent, '--', 'python3', path.join(cfg.skillsDir, 'transcribe/scripts/transcribe.py'), '--engine', 'cloud', file],
-      { timeout: 30_000, maxBuffer: 1 << 20 },
+      ['run', '--agent', cfg.onecliAgent, '--', 'python3', path.join(cfg.skillsDir, 'transcribe/scripts/transcribe.py'), '--engine', cfg.stt === 'google' ? 'google' : 'cloud', file],
+      {
+        timeout: 30_000,
+        maxBuffer: 1 << 20,
+        env: { ...process.env, STT_GOOGLE_USAGE: cfg.sttGoogleUsageFile, STT_GOOGLE_MAX_MINUTES: String(cfg.sttGoogleMaxMinutes) },
+      },
     );
     return parseTranscribe(stdout);
   } finally {

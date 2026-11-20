@@ -39,6 +39,12 @@ export interface Config {
   googleVoice?: string;
   /** Shared monthly character counter (the `speak` skill writes the same file from inside the agent containers). */
   googleUsageFile: string;
+  /** Speech-to-text for live calls: Groq Whisper (default) or Google Cloud (opt-in). Google falls back to Groq, then local. */
+  stt: 'groq' | 'google';
+  /** Monthly cap on billed Google speech-to-text minutes; above it calls use Groq until next month. */
+  sttGoogleMaxMinutes: number;
+  /** Shared monthly counter of billed Google speech-to-text seconds (written by the transcribe skill). */
+  sttGoogleUsageFile: string;
 }
 
 function need(name: string): string {
@@ -48,6 +54,12 @@ function need(name: string): string {
 }
 
 const list = (v?: string): string[] => (v ?? '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+
+function sttEngine(v?: string): 'groq' | 'google' {
+  const e = (v || 'groq').trim().toLowerCase();
+  if (e !== 'groq' && e !== 'google') throw new Error(`VOICE_STT must be groq or google, not "${e}"`);
+  return e;
+}
 
 export function loadConfig(root = path.resolve(import.meta.dirname, '../../..')): Config {
   return {
@@ -74,5 +86,8 @@ export function loadConfig(root = path.resolve(import.meta.dirname, '../../..'))
     piperHome: process.env.PIPER_HOME || path.join(process.env.HOME ?? '', 'projects/.nanoclaw-tools/piper'),
     googleVoice: process.env.VOICE_GOOGLE_VOICE || undefined,
     googleUsageFile: process.env.SPEAK_GOOGLE_USAGE || path.join(process.env.HOME ?? '', 'projects/.nanoclaw-data/voice/google-usage.json'),
+    stt: sttEngine(process.env.VOICE_STT),
+    sttGoogleMaxMinutes: Number(process.env.VOICE_STT_GOOGLE_MAX_MINUTES || '300'),
+    sttGoogleUsageFile: process.env.STT_GOOGLE_USAGE || path.join(process.env.HOME ?? '', 'projects/.nanoclaw-data/voice/stt-google-usage.json'),
   };
 }
