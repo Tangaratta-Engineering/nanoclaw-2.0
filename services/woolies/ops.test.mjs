@@ -133,3 +133,43 @@ test('search and history hide Marketplace items (10-digit codes), count them, an
   }
   assert.ok(validate({ op: 'add', list: 'ok', items: [{ stockcode: 1122348401 }] }));
 });
+
+import { recoverTab } from './recover.mjs';
+
+function recoverDeps({ liveAfterReplace, liveAfterRestart, canRestart = true }) {
+  const calls = [];
+  let state = 'frozen';
+  const fetchFn = async (url, opts) => {
+    calls.push(opts?.method === 'PUT' ? 'new' : url.includes('/close/') ? 'close' : 'list');
+    if (opts?.method === 'PUT' && liveAfterReplace) state = 'live';
+    return { json: async () => [{ id: 'A', type: 'page', url: 'https://www.woolworths.com.au/shop/mylists' }] };
+  };
+  return {
+    calls,
+    deps: {
+      cdp: 'http://x', fetchFn, sleep: async () => {}, canRestart: () => canRestart,
+      tryTabs: async () => (state === 'live' ? 'ws' : null),
+      restartChrome: async () => { calls.push('restart'); if (liveAfterRestart) state = 'live'; },
+    },
+  };
+}
+
+test('recoverTab replaces a frozen tab without restarting Chrome when that is enough', async () => {
+  const { deps, calls } = recoverDeps({ liveAfterReplace: true });
+  assert.equal(await recoverTab(deps), 'ws');
+  assert.deepEqual(calls, ['list', 'close', 'new']);
+});
+
+test('recoverTab restarts Chrome when a replacement tab is frozen too', async () => {
+  const { deps, calls } = recoverDeps({ liveAfterRestart: true });
+  assert.equal(await recoverTab(deps), 'ws');
+  assert.ok(calls.includes('restart'));
+});
+
+test('recoverTab does not restart Chrome again within the cool-down, and fails if nothing helps', async () => {
+  const a = recoverDeps({ canRestart: false });
+  await assert.rejects(recoverTab(a.deps), /restarted recently/);
+  assert.ok(!a.calls.includes('restart'));
+  const b = recoverDeps({});
+  await assert.rejects(recoverTab(b.deps), /did not bring it back/);
+});
