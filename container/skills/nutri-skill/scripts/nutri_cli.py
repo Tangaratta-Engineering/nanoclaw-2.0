@@ -73,7 +73,7 @@ def api_call(
 
     # trust_env=False: the nutrition API is an internal service. NanoClaw agent containers
     # set HTTP(S)_PROXY to a credential gateway that cannot resolve `nutri-api`, so honouring
-    # the proxy variables makes every call fail. (OpenRouter calls use their own client.)
+    # the proxy variables makes every call fail. (AI estimates run the claude CLI, which has its own proxy settings.)
     with httpx.Client(timeout=timeout, trust_env=False) as client:
         response = client.request(method, url, json=json_data, params=params)
         try:
@@ -297,7 +297,7 @@ def cmd_log(args) -> None:
 
         elif args.estimate:
             # AI estimation (calls Claude)
-            from openrouter import call_text_estimation
+            from ai_estimate import call_text_estimation
 
             try:
                 estimate = call_text_estimation(args.estimate, "")
@@ -393,7 +393,7 @@ def cmd_resolve_items(args) -> None:
 def cmd_photo(args) -> None:
     """OCR a nutrition label photo and extract nutrition data."""
     try:
-        from openrouter import call_vision, OpenRouterError
+        from ai_estimate import call_vision, EstimateError
 
         # Load image data
         image_bytes = None
@@ -410,7 +410,7 @@ def cmd_photo(args) -> None:
         # Call vision model
         try:
             nutrition = call_vision(image_bytes, "")
-        except OpenRouterError as e:
+        except EstimateError as e:
             error_json(str(e), "OCR_FAILED", EXIT_AI_FAILURE)
 
         # For high-confidence extractions, auto-log the meal

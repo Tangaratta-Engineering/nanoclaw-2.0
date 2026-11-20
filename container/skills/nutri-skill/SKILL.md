@@ -10,8 +10,7 @@ metadata:
     emoji: "🥗"
     requires:
       bins: ["python3"]
-      env: ["NUTRI_API_URL", "OPENROUTER_API_KEY"]
-    primaryEnv: "OPENROUTER_API_KEY"
+      env: ["NUTRI_API_URL"]
 ---
 
 # Nutrition Tracker Skill
