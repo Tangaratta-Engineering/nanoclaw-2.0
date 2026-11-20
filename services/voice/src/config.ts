@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 
 import { agentKeyOf, type AgentKey } from './policy.ts';
@@ -39,6 +40,14 @@ export interface Config {
   googleVoice?: string;
   /** Shared monthly character counter (the `speak` skill writes the same file from inside the agent containers). */
   googleUsageFile: string;
+  /**
+   * `standalone` (default): this service listens and speaks for its own agent. `listener`: listens for the whole call
+   * (one transcription, one decision on who is addressed) and hands the text to the addressed agent's service.
+   * `speaker`: only speaks; it does not listen. Exactly one service should be the listener, the others speakers.
+   */
+  role: 'standalone' | 'listener' | 'speaker';
+  /** Where the speaking services listen for the listener's messages (a directory agent containers cannot see). */
+  controlDir: string;
 }
 
 function need(name: string): string {
@@ -48,6 +57,12 @@ function need(name: string): string {
 }
 
 const list = (v?: string): string[] => (v ?? '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+
+function roleOf(v?: string): 'standalone' | 'listener' | 'speaker' {
+  const r = (v || 'standalone').trim().toLowerCase();
+  if (r !== 'standalone' && r !== 'listener' && r !== 'speaker') throw new Error(`VOICE_ROLE must be standalone, listener or speaker, not "${r}"`);
+  return r;
+}
 
 export function loadConfig(root = path.resolve(import.meta.dirname, '../../..')): Config {
   return {
@@ -73,6 +88,8 @@ export function loadConfig(root = path.resolve(import.meta.dirname, '../../..'))
     voiceId: process.env.VOICE_VOICE_ID || 'en_US-hfc_female-medium',
     piperHome: process.env.PIPER_HOME || path.join(process.env.HOME ?? '', 'projects/.nanoclaw-tools/piper'),
     googleVoice: process.env.VOICE_GOOGLE_VOICE || undefined,
+    role: roleOf(process.env.VOICE_ROLE),
+    controlDir: process.env.VOICE_CONTROL_DIR || path.join(process.env.XDG_RUNTIME_DIR || os.tmpdir(), 'nanoclaw-voice'),
     googleUsageFile: process.env.SPEAK_GOOGLE_USAGE || path.join(process.env.HOME ?? '', 'projects/.nanoclaw-data/voice/google-usage.json'),
   };
 }

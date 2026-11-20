@@ -26,11 +26,13 @@ import { durationSecs, rms, toMono16k } from './audio.ts';
 import { loadConfig } from './config.ts';
 import { OutboxWatcher } from './outbox.ts';
 import { AddresseeState, isForAgent } from './addressee.ts';
+import { controlPath, sendControl, serveControl } from './control.ts';
+import { routeTargets } from './router.ts';
 import { Floor } from './floor.ts';
 import { SpokenLog } from './echo.ts';
-import { splitForSpeech, stripEndWord, fillerFor, addressees, isLeadIn, isNoise, shouldBargeIn, isPromptEcho, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
+import { type AgentKey, splitForSpeech, stripEndWord, fillerFor, addressees, isLeadIn, isNoise, shouldBargeIn, isPromptEcho, isSleepCommand, isStopCommand, lifecycleAction, startsWithName, voiceSummary, wantsFullReadout } from './policy.ts';
 import { transcribe } from './stt.ts';
-import { SendGate } from './gate.ts';
+import { GateGroup } from './gate.ts';
 import { GoogleTtsWorker, Speaker, TtsWorker } from './tts.ts';
 
 const MIN_SECS = 0.5;
@@ -67,7 +69,28 @@ let turnStart = 0; // when George's last clip ended, for the latency log
 let lastSpokenAt = 0;
 let fullReadout = false;
 const PATIENCE = Number(process.env.VOICE_PATIENCE || '1'); // scale the waits: 0.7 = quicker, 1.5 = more patient
-const gate = new SendGate((said) => void flushUtterances(said), PATIENCE);
+const NAMES: Record<AgentKey, string> = { tiff: 'Tiff', jimmy: 'Jimmy', jack: 'Jack' };
+const ALL_AGENTS: AgentKey[] = ['tiff', 'jimmy', 'jack'];
+const LISTENER = cfg.role === 'listener';
+/** A transcript that is for `key`: this service's own agent speaks it, another agent's service is handed it over the control socket. */
+function deliver(key: AgentKey, said: string): void {
+  if (key === cfg.agentKey) {
+    void flushUtterances(said, lastClipEnd);
+    return;
+  }
+  void sendControl(controlPath(cfg.controlDir, key), { op: 'say', text: said, clipEnd: lastClipEnd }).then((ok) => {
+    if (ok) return;
+    log(`could not reach ${key}'s voice service`);
+    speechQueue.push(`${NAMES[key]} isn't on the call right now.`);
+    void drainSpeech();
+  });
+}
+const gate = new GateGroup<AgentKey>(LISTENER ? ALL_AGENTS : [cfg.agentKey], deliver, PATIENCE);
+/** Tell every voice service to stop speaking (the listener hears George, the others speak). */
+const stopEveryone = (): void => {
+  stopSpeaking();
+  if (LISTENER) for (const k of ALL_AGENTS) if (k !== cfg.agentKey) void sendControl(controlPath(cfg.controlDir, k), { op: 'stop' });
+};
 const pending: string[] = []; // things George said while she was talking, sent when she finishes
 let fillerTimer: NodeJS.Timeout | null = null;
 let fillerCount = 0;
@@ -201,11 +224,11 @@ async function processUtterance(pcm: Buffer): Promise<void> {
     log(`ignored: that is ${echoOf} speaking, heard back through the microphone`);
     return;
   }
-  const wasBusy = busy();
+  const wasBusy = busy() || (LISTENER && floor.holder() !== null); // an agent speaking on the call counts, whichever service it is
   if (isSleepCommand(text)) {
     log('sleep command: no longer listening until George unmutes or rejoins');
     asleep = true;
-    stopSpeaking();
+    stopEveryone();
     gate.reset();
     if (!cfg.wakeNames.length || startsWithName(text, cfg.wakeNames)) {
       speechQueue.push("Okay, I've stopped listening. Unmute yourself or rejoin the channel to wake me.");
@@ -216,13 +239,16 @@ async function processUtterance(pcm: Buffer): Promise<void> {
   if (asleep) return; // a clip captured just before "go to sleep" must not be acted on
   if (isStopCommand(text, [...cfg.wakeNames, ...cfg.otherNames])) {
     log('stop command');
-    stopSpeaking();
+    stopEveryone();
     return;
   }
-  if (!isForAgent(cfg.agentKey, addressees(text), addressee)) {
+  const named = addressees(text);
+  const targets: AgentKey[] = LISTENER ? routeTargets(named, addressee) : isForAgent(cfg.agentKey, named, addressee) ? [cfg.agentKey] : [];
+  if (!targets.length) {
     log('not for me:', text.slice(0, 60));
     return;
   }
+  if (LISTENER) log(`for ${targets.join(' and ')}: ${text.slice(0, 60)}`);
   if (isNoise(text, reliability, wasBusy)) {
     gate.filler(); // a filler or breath while composing a thought: keep waiting
     return;
@@ -235,26 +261,26 @@ async function processUtterance(pcm: Buffer): Promise<void> {
   if (wasBusy && shouldBargeIn(text, BARGE_IN_WORDS)) {
     log('barge-in: he spoke over her, so she stops and listens');
     const earlier = pending.splice(0); // what he said earlier while she was talking still counts
-    stopSpeaking();
-    gate.add([...earlier, text].join(' '));
+    stopEveryone();
+    gate.add(targets, [...earlier, text].join(' '));
     lastClipEnd = clipEnded;
     return;
   }
   lastClipEnd = clipEnded;
   const ended = stripEndWord(text, cfg.endWord);
   if (ended) log('end keyword: sending now');
-  gate.add(ended ?? text, ended !== null);
+  gate.add(targets, ended ?? text, ended !== null);
 }
 
 /** Send everything George said in one go once he has paused long enough. */
-async function flushUtterances(said: string): Promise<void> {
+async function flushUtterances(said: string, clipEnd: number = lastClipEnd): Promise<void> {
   if (busy()) {
     pending.push(said); // low tolerance for interruption: she finishes her thought first
     return;
   }
   fullReadout = wantsFullReadout(said);
   spokenThisTurn = 0;
-  turnStart = lastClipEnd;
+  turnStart = clipEnd;
   outbox.arm(120_000);
   log('→ agent:', said.slice(0, 160));
   armFiller();
@@ -328,7 +354,7 @@ async function join(): Promise<void> {
     connection = conn;
     await entersState(conn, VoiceConnectionStatus.Ready, 30_000);
     conn.subscribe(player);
-    listen(conn);
+    if (cfg.role !== 'speaker') listen(conn); // a speaker only speaks: the listening service hears George for the whole call
     tts.warm(); // load the voice now so the first reply is not slow
     log(`joined: ${cfg.agentName} is in the voice channel`);
   } catch (e) {
@@ -369,6 +395,11 @@ async function main(): Promise<void> {
   guild = client.guilds.cache.get(cfg.guildId) ?? (await client.guilds.fetch(cfg.guildId));
   log('gateway ready');
   outbox.start();
+  if (cfg.role === 'speaker') {
+    serveControl(controlPath(cfg.controlDir, cfg.agentKey), (m) => (m.op === 'stop' ? stopSpeaking() : void flushUtterances(m.text, m.clipEnd)), log);
+    log(`speaker: waiting for the listener's messages on ${controlPath(cfg.controlDir, cfg.agentKey)}`);
+  }
+  if (LISTENER) log('listener: hearing George for the whole call and handing text to the addressed agent');
 
   client.on('voiceStateUpdate', (before, after) => {
     if (after.id !== cfg.userId) return;

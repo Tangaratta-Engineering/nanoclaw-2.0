@@ -78,3 +78,27 @@ export class SendGate {
     }, this.holdMs * this.patience);
   }
 }
+
+/**
+ * One SendGate per agent for the service that listens for the whole call: George's clips are captured and transcribed
+ * once, each transcript is added to the gate of whoever it is for, and every gate holds off while he is still talking.
+ */
+export class GateGroup<K extends string> {
+  private gates = new Map<K, SendGate>();
+  constructor(keys: readonly K[], onSend: (key: K, text: string) => void, patience = 1) {
+    for (const k of keys) this.gates.set(k, new SendGate((text) => onSend(k, text), patience));
+  }
+  private all(fn: (g: SendGate) => void): void {
+    for (const g of this.gates.values()) fn(g);
+  }
+  captureStart(): void { this.all((g) => g.captureStart()); }
+  captureEnd(): void { this.all((g) => g.captureEnd()); }
+  transcribeStart(): void { this.all((g) => g.transcribeStart()); }
+  transcribeEnd(): void { this.all((g) => g.transcribeEnd()); }
+  reset(): void { this.all((g) => g.reset()); }
+  filler(): void { this.all((g) => g.filler()); }
+  /** Add a transcript to the gate of each agent it is for. */
+  add(keys: readonly K[], text: string, sendNow = false): void {
+    for (const k of keys) this.gates.get(k)?.add(text, sendNow);
+  }
+}
