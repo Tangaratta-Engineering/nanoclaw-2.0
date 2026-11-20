@@ -1,0 +1,15 @@
+[Unit]
+Description=NanoClaw Peoplecare claims bridge (agents' claim requests -> signed-in Chrome, records in Postgres)
+After=claims-chrome.service
+Wants=claims-chrome.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/nanoclaw-2.0/services/claims
+Environment=HOME=%h
+ExecStart=%h/.nvm/versions/node/v22.22.3/bin/node server.mjs
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
