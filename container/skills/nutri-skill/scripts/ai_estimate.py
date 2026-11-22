@@ -1,4 +1,4 @@
-"""AI estimation for the nutrition skill: label OCR (vision) and meal estimates (text), done by Claude.
+"""Label OCR (vision) for the nutrition skill, done by Claude. Meal estimates are made inside nutri-api, not here.
 
 Runs the `claude` CLI that every agent container already has (`claude -p`). It signs in the same way the agent itself
 does, through the OneCLI gateway, so nothing is read from or needed in the environment: no API key, and no Python
@@ -47,26 +47,6 @@ Return ONLY valid JSON (no markdown, no prose) matching this schema:
 
 If kJ shown but kcal not shown, set kcal = kJ / 4.184 and kj_was_primary = true.
 If uncertain, set confidence = 'low'."""
-
-TEXT_PROMPT = """Estimate nutrition for this Australian meal: "__DESCRIPTION__"
-
-Return ONLY valid JSON (no markdown, no prose) matching this schema:
-{
-  "product_name": "string (meal name)",
-  "serving_type": "per_serving",
-  "kcal": "number",
-  "protein_g": "number",
-  "fat_g": "number",
-  "saturated_fat_g": "number or null",
-  "carbs_g": "number",
-  "sugar_g": "number or null",
-  "sodium_mg": "number or null",
-  "fibre_g": "number (best estimate in grams, 0 if the food has none; never null)",
-  "confidence": "high | medium | low"
-}
-
-Set confidence = 'low' if uncertain about the meal or ingredients."""
-
 
 def _claude(prompt: str, image: bytes = b"", timeout: int = 150, runner: Callable = subprocess.run) -> str:
     """One `claude -p` call. With an image, the file is put in a scratch folder and Claude may only read it."""
@@ -118,12 +98,6 @@ def _parse_json(text: str) -> Dict[str, Any]:
 def call_vision(image_bytes: bytes, api_key: str = "", model: str = "", runner: Callable = subprocess.run) -> Dict[str, Any]:
     """Extract nutrition from a label photo. `api_key` and `model` are unused (kept so callers need not change)."""
     return _validate_nutrition_schema(_parse_json(_claude(VISION_PROMPT, image=image_bytes, runner=runner)))
-
-
-def call_text_estimation(description: str, api_key: str = "", model: str = "", runner: Callable = subprocess.run) -> Dict[str, Any]:
-    """Estimate nutrition for a meal description. `api_key` and `model` are unused."""
-    prompt = TEXT_PROMPT.replace("__DESCRIPTION__", description.replace('"', "'"))
-    return _validate_nutrition_schema(_parse_json(_claude(prompt, runner=runner)))
 
 
 def _validate_nutrition_schema(data: Dict[str, Any]) -> Dict[str, Any]:

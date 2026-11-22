@@ -12,7 +12,7 @@ import os
 import sys
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
 import pytz
@@ -38,19 +38,25 @@ EXIT_SUCCESS = 0
 EXIT_ERROR = 1
 EXIT_MISSING_PREREQ = 2
 EXIT_AI_FAILURE = 3
-EXIT_FOOD_NEEDS_ESTIMATE = 4
 
-# Macro fields from an AI estimate that POST /meals accepts
-ESTIMATE_MACRO_FIELDS = (
-    "kcal",
-    "protein_g",
-    "fat_g",
-    "saturated_fat_g",
-    "carbs_g",
-    "sugar_g",
-    "sodium_mg",
-    "fibre_g",
+# Units POST /meals/log-items accepts (see CLAUDE.md "Serving units")
+LOG_UNITS = (
+    "g",
+    "ml",
+    "scoop",
+    "item",
+    "slice",
+    "cup",
+    "tsp",
+    "tbsp",
+    "kg",
+    "oz",
+    "lb",
+    "l",
 )
+MAX_LOG_ITEMS = 20
+# Per-item failure codes from the API that mean "the AI could not produce a value"
+AI_FAILURE_CODES = ("AI_NO_RESULT", "AI_ESTIMATE_FAILED")
 
 
 def get_today_sydney() -> date:
@@ -61,9 +67,9 @@ def get_today_sydney() -> date:
 def api_call(
     method: str,
     path: str,
-    json_data: Optional[Dict] = None,
-    params: Optional[Dict] = None,
-) -> Dict[str, Any]:
+    json_data: dict | None = None,
+    params: dict | None = None,
+) -> dict[str, Any]:
     """
     Make an API call to the nutrition backend.
 
@@ -81,7 +87,11 @@ def api_call(
         json.JSONDecodeError on invalid response
     """
     url = f"{NUTRI_API_URL}{path}"
-    timeout = httpx.Timeout(60.0 if json_data or "estimate" in path else 10.0)
+    # log-items may run one `claude -p` estimate per item inside the API, so allow longer.
+    if path == "/meals/log-items":
+        timeout = httpx.Timeout(300.0)
+    else:
+        timeout = httpx.Timeout(60.0 if json_data else 10.0)
 
     # trust_env=False: the nutrition API is an internal service. NanoClaw agent containers
     # set HTTP(S)_PROXY to a credential gateway that cannot resolve `nutri-api`, so honouring
@@ -139,7 +149,7 @@ def with_person(args, data: dict | None = None) -> dict:
     return result
 
 
-def output_json(data: Dict[str, Any], exit_code: int = EXIT_SUCCESS):
+def output_json(data: dict[str, Any], exit_code: int = EXIT_SUCCESS):
     """Output JSON to stdout and exit."""
     print(json.dumps(data, default=str))
     sys.exit(exit_code)
@@ -266,12 +276,77 @@ def cmd_help(args) -> None:
     output_json(help_text)
 
 
-def cmd_log(args) -> None:
-    """Log a meal (recipe, food, or free-text estimate)."""
+def _parse_item_spec(spec: str) -> dict:
+    """Parse one `--item "NAME|QTY|UNIT"` value (NAME may itself contain '|')."""
+    parts = spec.rsplit("|", 2)
+    if len(parts) != 3:
+        raise ValueError(f"--item must look like NAME|QTY|UNIT, got: {spec!r}")
+    return {"name": parts[0], "quantity": parts[1], "unit": parts[2]}
+
+
+def _validate_item(raw: Any) -> dict:
+    """Return a clean {name, quantity, unit} dict or raise ValueError."""
+    if not isinstance(raw, dict):
+        raise ValueError(f"Each item must be an object, got: {raw!r}")
+    name = str(raw.get("name") or "").strip()
+    if not name:
+        raise ValueError("Item name must not be empty")
     try:
-        # Determine source and collect data
+        quantity = float(raw.get("quantity"))
+    except (TypeError, ValueError):
+        raise ValueError(f"Item {name!r}: quantity must be a number")
+    if not quantity > 0 or quantity == float("inf"):
+        raise ValueError(f"Item {name!r}: quantity must be greater than 0")
+    unit = str(raw.get("unit") or "").strip().lower()
+    if unit not in LOG_UNITS:
+        raise ValueError(
+            f"Item {name!r}: unit {unit!r} is not one of {', '.join(LOG_UNITS)}"
+        )
+    return {"name": name, "quantity": quantity, "unit": unit}
+
+
+def _collect_log_items(args) -> list[dict]:
+    """Gather items from --name/--quantity/--unit, repeated --item and --items-json."""
+    raw: list[Any] = []
+    if args.name is not None or args.quantity is not None or args.unit is not None:
+        raw.append({"name": args.name, "quantity": args.quantity, "unit": args.unit})
+    for spec in args.item or []:
+        raw.append(_parse_item_spec(spec))
+    if args.items_json:
+        try:
+            parsed = json.loads(args.items_json)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON for --items-json: {e}")
+        if not isinstance(parsed, list):
+            raise ValueError("--items-json must be a JSON array")
+        raw.extend(parsed)
+    if not raw:
+        raise ValueError("Provide --name/--quantity/--unit, --item or --items-json")
+    if len(raw) > MAX_LOG_ITEMS:
+        raise ValueError(f"At most {MAX_LOG_ITEMS} items per call, got {len(raw)}")
+    return [_validate_item(r) for r in raw]
+
+
+def _log_items_exit_code(result: dict[str, Any]) -> int:
+    """0 if all logged; 3 if any item failed on AI; 1 for any other failure."""
+    failed = [i for i in result.get("items", []) if i.get("status") != "logged"]
+    if not failed:
+        return EXIT_SUCCESS
+    codes = {(i.get("error") or {}).get("code") for i in failed}
+    if codes & set(AI_FAILURE_CODES):
+        return EXIT_AI_FAILURE
+    return EXIT_ERROR
+
+
+def cmd_log(args) -> None:
+    """Log a meal: food items (the API picks the source) or a saved recipe."""
+    try:
         if args.recipe:
-            # Log from recipe
+            if args.name or args.item or args.items_json or args.quantity or args.unit:
+                error_json(
+                    "--recipe cannot be combined with --name/--quantity/--unit/--item/--items-json",
+                    "INVALID_ARGS",
+                )
             recipes = api_call("GET", "/recipes", params={"search": args.recipe})
             if not recipes:
                 error_json(
@@ -287,156 +362,29 @@ def cmd_log(args) -> None:
                 "recipe_id": recipe["id"],
                 "servings": float(args.servings or 1),
             }
+            output_json(api_call("POST", "/meals", with_person(args, payload)))
+            return
 
-        elif args.food:
-            # Log from food
-            foods = api_call("GET", "/foods", params={"search": args.food})
-            if not foods:
-                error_json(
-                    f"Food not found: {args.food}",
-                    "FOOD_NOT_FOUND",
-                    EXIT_MISSING_PREREQ,
-                )
+        if args.servings:
+            error_json("--servings only applies to --recipe", "INVALID_ARGS")
+        try:
+            items = _collect_log_items(args)
+        except ValueError as e:
+            error_json(str(e), "INVALID_ARGS")
 
-            food = foods[0]
-            payload = {
-                "meal_category": args.meal,
-                "source": "food",
-                "food_id": food["id"],
-                "quantity": float(args.quantity or 1),
-                "unit": args.unit or "serving",
-            }
-
-        elif args.estimate:
-            # AI estimation (calls Claude)
-            from ai_estimate import call_text_estimation
-
-            try:
-                estimate = call_text_estimation(args.estimate, "")
-            except Exception as e:
-                error_json(f"AI estimation failed: {e}", "AI_FAILURE", EXIT_AI_FAILURE)
-
-            payload = {
-                "meal_category": args.meal,
-                "source": "ai_estimate",
-                "free_text_description": args.estimate,
-                **estimate,
-            }
-        else:
-            error_json("Must provide --recipe, --food, or --estimate", "MISSING_SOURCE")
-
-        # Create meal log
-        meal = api_call("POST", "/meals", with_person(args, payload))
-        output_json(meal)
+        payload = {"meal_category": args.meal, "items": items}
+        result = api_call("POST", "/meals/log-items", with_person(args, payload))
+        # Print the API response unchanged so the agent sees every item's outcome.
+        output_json(result, _log_items_exit_code(result))
 
     except Exception as e:
         error_json(str(e), "LOG_ERROR")
 
 
-def cmd_resolve_items(args) -> None:
-    """Batch resolve and log a structured meal."""
-    try:
-        # Parse items: either a JSON array string or individual --item flags
-        if args.items_json:
-            try:
-                items = json.loads(args.items_json)
-            except json.JSONDecodeError as e:
-                error_json(f"Invalid JSON for --items: {e}", "INVALID_JSON")
-                return
-        else:
-            error_json("Must provide --items JSON", "MISSING_ITEMS")
-            return
-
-        if not items:
-            error_json("No items provided. Use --items JSON array.", "MISSING_ITEMS")
-            return
-
-        # Step 1: call resolve-items endpoint
-        payload = {"meal_category": args.meal, "items": items}
-        resolve_result = api_call("POST", "/meals/resolve-items", payload)
-
-        logged_meals = []
-        estimation_failures = []
-
-        # Step 2: log resolved items
-        for item in resolve_result.get("resolved", []):
-            meal_payload = {
-                "meal_category": args.meal,
-                "source": "food",
-                "food_id": item["food_id"],
-                "quantity": item["quantity"],
-                "unit": item["unit"],
-            }
-            meal = api_call("POST", "/meals", with_person(args, meal_payload))
-            logged_meals.append(
-                {
-                    "name": item["name"],
-                    "source": item["source"],
-                    "meal_id": meal.get("id"),
-                    "kcal": float(meal.get("kcal", 0)),
-                    "protein_g": float(meal.get("protein_g", 0)),
-                }
-            )
-
-        # Step 3: items found nowhere. The AI estimate is the last resort, so log it
-        # straight away (flagged as an estimate) rather than asking the user first.
-        estimation_failures = []
-        for item in resolve_result.get("needs_estimation", []):
-            description = f"{item['name']}, {item['quantity']} {item['unit']}"
-            try:
-                from ai_estimate import call_text_estimation
-
-                estimate = call_text_estimation(description, "")
-            except Exception as e:
-                estimation_failures.append(
-                    {
-                        "name": item["name"],
-                        "quantity": item["quantity"],
-                        "unit": item["unit"],
-                        "reason": str(e),
-                    }
-                )
-                continue
-
-            meal_payload = {
-                "meal_category": args.meal,
-                "source": "ai_estimate",
-                "free_text_description": description,
-                "display_name": item["name"],
-                "notes": f"AI estimate ({estimate.get('confidence', 'low')} confidence)",
-                **{k: v for k, v in estimate.items() if k in ESTIMATE_MACRO_FIELDS},
-            }
-            meal = api_call("POST", "/meals", with_person(args, meal_payload))
-            logged_meals.append(
-                {
-                    "name": item["name"],
-                    "source": "ai_estimate",
-                    "estimated": True,
-                    "confidence": estimate.get("confidence", "low"),
-                    "meal_id": meal.get("id"),
-                    "kcal": float(meal.get("kcal", 0)),
-                    "protein_g": float(meal.get("protein_g", 0)),
-                }
-            )
-
-        output_data = {
-            "status": "ok",
-            "meal_category": args.meal,
-            "logged": logged_meals,
-        }
-        if estimation_failures:
-            output_data["estimation_failures"] = estimation_failures
-            output_json(output_data, EXIT_AI_FAILURE)
-        output_json(output_data)
-
-    except Exception as e:
-        error_json(str(e), "RESOLVE_ITEMS_ERROR")
-
-
 def cmd_photo(args) -> None:
     """OCR a nutrition label photo and extract nutrition data."""
     try:
-        from ai_estimate import call_vision, EstimateError
+        from ai_estimate import EstimateError, call_vision
 
         # Load image data
         image_bytes = None
@@ -972,37 +920,46 @@ def main():
 
     # log command
     log_parser = subparsers.add_parser(
-        "log", help="Log a meal", parents=[person_parent]
+        "log",
+        help="Log a meal (food items, or a saved recipe)",
+        parents=[person_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Log food: the API decides where each item's nutrition comes from "
+            "(your foods, Open Food Facts, then an AI estimate).\n"
+            "Do not pick a source yourself.\n\n"
+            "  log --meal lunch --name 'meat pie' --quantity 1 --unit item\n"
+            "  log --meal lunch --item 'meat pie|1|item' --item 'cola|375|ml'\n"
+            "  log --meal lunch --items-json "
+            '\'[{"name":"meat pie","quantity":1,"unit":"item"}]\'\n'
+            "  log --meal dinner --recipe 'Chilli' --servings 1.5\n\n"
+            "Output: the API JSON, unchanged. Each item has status logged|failed.\n"
+            "Exit codes: 0 all items logged; 3 some item failed with AI_NO_RESULT or\n"
+            "AI_ESTIMATE_FAILED (JSON still on stdout); 1 other failures; 2 unknown\n"
+            "--person (PERSON_NOT_FOUND, JSON on stderr).\n"
+            "Units: " + ", ".join(LOG_UNITS) + f". Max {MAX_LOG_ITEMS} items per call."
+        ),
     )
     log_parser.add_argument(
         "--meal", required=True, choices=["breakfast", "lunch", "dinner", "snack"]
     )
-    log_group = log_parser.add_mutually_exclusive_group(required=True)
-    log_group.add_argument("--recipe", help="Recipe name")
-    log_group.add_argument("--food", help="Food name")
-    log_group.add_argument("--estimate", help="Free-text meal description")
-    log_parser.add_argument("--servings", help="Number of servings")
-    log_parser.add_argument("--quantity", help="Food quantity")
-    log_parser.add_argument("--unit", help="Food unit")
-    log_parser.set_defaults(func=cmd_log)
-
-    # resolve-items command
-    resolve_parser = subparsers.add_parser(
-        "resolve-items",
-        help="Batch resolve and log a structured meal",
-        parents=[person_parent],
+    log_parser.add_argument("--recipe", help="Saved recipe name (use with --servings)")
+    log_parser.add_argument("--servings", help="Recipe servings (default 1)")
+    log_parser.add_argument("--name", help="Food name, e.g. 'meat pie' (single item)")
+    log_parser.add_argument("--quantity", help="Quantity for --name (> 0)")
+    log_parser.add_argument("--unit", help="Unit for --name: " + ", ".join(LOG_UNITS))
+    log_parser.add_argument(
+        "--item",
+        action="append",
+        metavar="NAME|QTY|UNIT",
+        help="One food item, repeatable, e.g. --item 'meat pie|1|item'",
     )
-    resolve_parser.add_argument(
-        "--meal", required=True, choices=["breakfast", "lunch", "dinner", "snack"]
-    )
-    resolve_parser.add_argument(
-        "--items",
-        dest="items_json",
-        required=True,
+    log_parser.add_argument(
+        "--items-json",
         metavar="JSON",
-        help='JSON array: \'[{"name":"chicken","quantity":150,"unit":"g"},...]\'',
+        help='JSON array: \'[{"name":"chicken","quantity":150,"unit":"g"}]\'',
     )
-    resolve_parser.set_defaults(func=cmd_resolve_items)
+    log_parser.set_defaults(func=cmd_log)
 
     # photo command
     photo_parser = subparsers.add_parser(
