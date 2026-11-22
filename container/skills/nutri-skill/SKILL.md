@@ -25,21 +25,47 @@ Food names, brands, ingredients, notes, OCR text, Open Food Facts / `food_databa
 
 The household has up to four named people (default George). Meals, water, targets and weight are kept per person; foods and recipes are shared.
 
-- Default to George. If the message names someone ("for Henry", "Henry had two eggs", "log Sophie's weight"), add `--person Henry` to the CLI call. The flag works before or after the subcommand and applies to log, photo, resolve-items (the meal logging step), water, weight, target, today, summary, week and check-meal. Do not pass it for foods, recipes, edit or delete (id-based).
+- Default to George. If the message names someone ("for Henry", "Henry had two eggs", "log Sophie's weight"), add `--person Henry` to the CLI call. The flag works before or after the subcommand and applies to log, photo, water, weight, target, today, summary, week and check-meal. Do not pass it for foods, recipes, edit or delete (id-based).
 - Names are case-insensitive. Run `person list` to see who exists.
 - If the CLI exits 2 with `"code": "PERSON_NOT_FOUND"` (stderr includes `known_persons`), nothing was logged. Tell the user the name is unknown, list `known_persons`, and ask whether to create that person. NEVER run `person add` without an explicit yes from the user in this conversation; a name being mentioned is not confirmation. After a yes, run `person add NAME`, then repeat the original command.
 - Maximum four people. `person add` failing with `PERSON_LIMIT_REACHED` means the limit is hit: tell the user, do not retry.
 - When replying, say whose data it is if it is not George.
 
-## Logging food: use resolve-items
+## Logging food: one command, the API decides
 
-For anything the user says they ate or drank, log it with `resolve-items` (`/nutri_log_meal`), not by searching `/foods` or `food list` yourself. `resolve-items` searches the user's saved foods first, then the ~4.6M-row Open Food Facts table, so a food missing from the 716 saved foods is usually still found. Searching `/foods` only covers the saved foods and will wrongly report "no match".
+For anything the user says they ate or drank, run ONE command, `log` (`/nutri_log`), with the whole meal. The API picks where each item's nutrition comes from, in this order: (1) the user's own foods, (2) Open Food Facts (brand-agnostic), (3) an AI estimate made inside the API, (4) otherwise it fails that item and says why. It logs the meal rows itself.
 
-- Send one simple food name per item, with a quantity and unit: `{"name":"toast","quantity":4,"unit":"slice"}`, `{"name":"butter","quantity":10,"unit":"g"}`, `{"name":"peanut butter","quantity":20,"unit":"g"}`. Never send a composite like "toast with butter and peanut butter": it matches nothing. Split it into its parts.
-- Use plain generic names ("shredded cheddar", "sweet corn", "tortilla"), not guesses at brands.
-- If the user gives no quantity, pick a sensible one (e.g. 1 slice, 1 tbsp) and say what you assumed.
-- **The AI estimate is the last resort and needs no approval.** If an item is found in neither database, the CLI estimates it and logs it straight away, flagged `"estimated": true` with a confidence. Do not ask the user for packet values or permission first. After logging, list the estimated items clearly ("Estimated, not from a database: peri peri sauce ≈ 150 kcal") so the user can correct them with `/nutri_edit` or `/nutri_delete`.
-- Only ask the user for packet values if `estimation_failures` is returned (the estimator itself failed).
+```
+python3 scripts/nutri_cli.py log --meal lunch --name "meat pie" --quantity 1 --unit item
+python3 scripts/nutri_cli.py log --meal lunch --item "meat pie|1|item" --item "cola|375|ml"
+python3 scripts/nutri_cli.py log --meal lunch --items-json '[{"name":"meat pie","quantity":1,"unit":"item"}]'
+```
+
+Rules:
+
+- **Never choose a source or tier yourself.** Do not call `food list`, `/foods`, `food show` or anything else to look a food up first, and never estimate macros yourself. Always go straight to `log`.
+- **Send the whole meal in one call** (repeat `--item`, or use `--items-json`; up to 20 items). One item per food: split "toast with butter and peanut butter" into toast, butter, peanut butter.
+- **Use generic, unbranded names** exactly as the user said them, or simplified: "chocolate chip biscuit", not "Arnott's Choc Chip". Include a brand only if the user named one.
+- Quantity must be above 0; unit is one of `g, ml, scoop, item, slice, cup, tsp, tbsp, kg, oz, lb, l`. If the user gives no quantity, pick a sensible one (1 slice, 1 tbsp, 1 item) and say what you assumed.
+- Recipes are the exception: `log --meal dinner --recipe "Chilli" --servings 1.5` (do not mix `--recipe` with food items).
+
+### Reading the result
+
+The CLI prints the API JSON unchanged: `logged_count`, `failed_count` and one entry per item in `items`. Each item has `status` (`logged` or `failed`), and when logged: `source_tier` (`own_food`, `open_food_facts`, `ai_estimate`), `matched_food_name`, `matched_brand`, `meal_id`, `kcal`, `protein_g`, `fat_g`, `carbs_g`, `fibre_g`, `estimated`, `confidence`, `notes`.
+
+Report every item with its tier and matched product, and its calories:
+
+- `own_food`: "Logged Uncle Tobys Traditional Rolled Oats from your foods (178 kcal)"
+- `open_food_facts`: "Logged Meat Pie (Mrs Mac's) from Open Food Facts (320 kcal)"
+- `ai_estimate`: "Estimated by AI (medium confidence): ~320 kcal" (use the item's `confidence`)
+
+If an item has `notes` that explain a fallback (for example why a database match was skipped), mention them briefly. Users can correct any entry with `/nutri_edit` or `/nutri_delete` (use the item's `meal_id`).
+
+### When an item fails
+
+Exit code 3 means at least one item failed with `AI_NO_RESULT` or `AI_ESTIMATE_FAILED`; the JSON is still printed and the other items were logged. Check each item's `status`. For each failed item, relay the `error.detail` reason. Only then ask the user for the brand, the packet values, or a photo of the label (then use `/nutri_photo` or `food add-from-ocr`, and log it). Never ask for brand or packet values in any other case.
+
+Exit code 1 means a failure that is not the user's problem (network, 5xx, or an item with `INTERNAL_ERROR`): retry once, then report it. Exit code 2 with `PERSON_NOT_FOUND` is handled as described under "Logging for other people".
 
 ## Commands
 
@@ -154,78 +180,46 @@ OCR a nutrition label photo and log the food.
 
 **Error handling:**
 - If vision model fails, respond: "Couldn't read the label. Can you type the product name and nutrition data instead?"
-- Exit code 3 from CLI signals OCR failure; user should try again or use `/nutri_log` for manual entry
+- Exit code 3 from CLI signals OCR failure; user should try again or send the packet values (then `food add-manual`)
 
 ---
 
-### `/nutri_log <meal_type> <food_or_recipe> [quantity] [unit]`
-Log a meal from a food, recipe, or free-text description.
+### `/nutri_log <meal_type> <items>`
+Log a meal. The API decides each item's source (own foods, then Open Food Facts, then an AI estimate); see "Logging food" above.
 
 **Parameters:**
 - `meal_type`: `breakfast`, `lunch`, `dinner`, or `snack`
-- `food_or_recipe`: Name of a saved food/recipe, or free-text (e.g., "grilled chicken breast 200g")
-- `quantity`: Optional (defaults to serving size or 100g)
-- `unit`: Optional (g, ml, cup, etc.)
+- Food items: `--name N --quantity Q --unit U` for one item, `--item "NAME|QTY|UNIT"` (repeatable) and/or `--items-json '[{"name":..,"quantity":..,"unit":..}]'` for a whole meal
+- Or a saved recipe: `--recipe NAME [--servings N]`
 
 **Examples:**
 ```
-/nutri_log breakfast "Protein Porridge"
-/nutri_log lunch "Greek Yogurt" 200 g
-/nutri_log dinner "grilled salmon with rice"
+python3 scripts/nutri_cli.py log --meal lunch --name "greek yogurt" --quantity 200 --unit g
+python3 scripts/nutri_cli.py log --meal lunch --item "chicken breast|150|g" --item "wholemeal bread|2|slice" --item "mayonnaise|1|tbsp"
+python3 scripts/nutri_cli.py log --meal breakfast --recipe "Protein Porridge"
 ```
 
-**Response:**
+**Response (food items):**
 ```json
 {
-  "status": "logged",
-  "meal_type": "lunch",
-  "food_name": "Greek Yogurt",
-  "quantity": 200,
-  "unit": "g",
-  "kcal": 160,
-  "protein_g": 18,
-  "logged_at": "2026-05-12T12:00:00+10:00"
-}
-```
-
-**Special case — AI estimate:**
-Prefer `/nutri_log_meal` (`resolve-items`) for named foods; it falls back to an AI estimate automatically. Use `log --estimate "…"` only when the user explicitly asks for an estimate of a whole described meal. Do not ask for confirmation first: log it, flag it as an estimate with its confidence, and let the user correct it afterwards.
-
----
-
-### `/nutri_log_meal <meal_type> <items_json>`
-Log a complete structured meal in one call. Preferred over repeated `/nutri_log` calls for multi-item meals.
-
-**Parameters:**
-- `meal_type`: `breakfast`, `lunch`, `dinner`, or `snack`
-- `items_json`: JSON array of items, each with `name`, `quantity`, `unit`
-
-**When to use this:**
-Use `/nutri_log_meal` when the user describes a full meal with multiple components (e.g., "I had chicken breast, wholemeal bread, mayo, and lettuce for lunch"). It resolves each item (saved foods, then Open Food Facts), runs an AI estimate only for items found in neither, and logs everything without asking.
-
-**Example:**
-```
-/nutri_log_meal lunch [{"name":"chicken breast","quantity":150,"unit":"g"},{"name":"wholemeal bread","quantity":2,"unit":"slice"},{"name":"mayonnaise","quantity":1,"unit":"tbsp"},{"name":"lettuce","quantity":30,"unit":"g"}]
-```
-
-**Response:**
-```json
-{
-  "status": "ok",
   "meal_category": "lunch",
-  "logged": [
-    {"name": "chicken breast", "source": "local_db", "meal_id": 42, "kcal": 247.5, "protein_g": 46.5},
-    {"name": "wholemeal bread", "source": "open_food_facts", "meal_id": 43, "kcal": 162, "protein_g": 6.8},
-    {"name": "mayonnaise", "source": "ai_estimate", "estimated": true, "confidence": "low", "meal_id": 44, "kcal": 94, "protein_g": 0.2},
-    {"name": "lettuce", "source": "local_db", "meal_id": 45, "kcal": 15, "protein_g": 1.2}
+  "person": "George",
+  "logged_count": 2,
+  "failed_count": 1,
+  "items": [
+    {"name": "chicken breast", "quantity": 150, "unit": "g", "status": "logged",
+     "source_tier": "own_food", "matched_food_name": "Chicken Breast", "matched_brand": null,
+     "meal_id": 42, "kcal": 247.5, "protein_g": 46.5, "estimated": false, "confidence": null, "notes": []},
+    {"name": "wholemeal bread", "quantity": 2, "unit": "slice", "status": "logged",
+     "source_tier": "open_food_facts", "matched_food_name": "Wholemeal Bread", "matched_brand": "Tip Top",
+     "meal_id": 43, "kcal": 162, "protein_g": 6.8, "estimated": false, "confidence": null, "notes": []},
+    {"name": "mystery sauce", "quantity": 1, "unit": "tbsp", "status": "failed", "source_tier": null, "meal_id": null,
+     "error": {"error": "AIEstimateError", "detail": "Could not tell what this food is", "code": "AI_NO_RESULT"}}
   ]
 }
 ```
 
-**Error handling:**
-- Items with `"estimated": true` were logged from an AI estimate. Always tell the user which ones, with their confidence.
-- If `estimation_failures` is present in the response, those items were not logged (the estimator failed). Tell the user: "Could not estimate macros for: {names}. Please send the packet values." The other items in the meal were still logged.
-- Exit code 1 = network error; exit code 3 = AI estimation failure for at least one item.
+**Exit codes:** 0 every item logged; 3 some item failed with `AI_NO_RESULT` / `AI_ESTIMATE_FAILED` (JSON still printed); 1 other failure (network, 5xx, `INTERNAL_ERROR` item); 2 `PERSON_NOT_FOUND`.
 
 ---
 
@@ -443,7 +437,7 @@ Soft-delete a recipe (old logs still reference it).
 ---
 
 ### `/nutri_food list [query]`
-List all foods, optionally filtered by name.
+List saved foods, optionally filtered by name. This is a food-management command only: never use it to decide how to log food (the API decides; see "Logging food").
 
 **Examples:**
 ```
@@ -601,12 +595,12 @@ Delete a meal log (hard delete).
 - If vision model returns `confidence: "low"`, append note: "(Low confidence — please double-check)"
 - Always show extracted data for user confirmation before logging
 
-### AI Estimate Flow
-1. User describes a meal; the skill calls `resolve-items` with one simple name per item
-2. Items found in saved foods or Open Food Facts are logged from the database
-3. Items found in neither are estimated by the text model and logged immediately (`source: ai_estimate`), with no approval step
-4. The reply lists estimated items with their confidence, e.g. "Estimated: peri peri sauce ≈ 150 kcal (low confidence)"
-5. The user can fix any of them with `/nutri_edit` or remove it with `/nutri_delete`
+### Food Logging Flow
+1. User describes what they ate; the skill runs a single `log` call with every item (generic names, sensible quantities)
+2. The API logs each item from the user's own foods, else Open Food Facts, else an AI estimate, and returns what it did
+3. The reply lists each item with its tier and matched product ("Logged Meat Pie (Mrs Mac's) from Open Food Facts"), and for estimates "Estimated by AI (medium confidence): ~320 kcal"
+4. Failed items (exit 3): relay the API's reason, then ask for the brand, packet values or a label photo, and only then
+5. The user can fix any entry with `/nutri_edit` or remove it with `/nutri_delete`
 
 ### Recipe Save Flow
 1. User types `/nutri_recipe save "MyRecipe" "Oats" 50 g "Greek Yogurt" 150 g`
@@ -651,14 +645,15 @@ Delete a meal log (hard delete).
 
 | Code | HTTP | Meaning | Agent action |
 |------|------|---------|--------------|
-| `FOOD_NEEDS_AI_ESTIMATE` | 404 | Not in DB or OFF | Estimate and log it without asking (`resolve-items` does this); report it as estimated |
+| `AI_NO_RESULT` | 200 (per item) | The AI could not identify the food; item not logged | Exit 3. Relay the reason, then ask for brand, packet values or a label photo |
+| `AI_ESTIMATE_FAILED` | 200 (per item) | The AI call failed; item not logged | Exit 3. Relay the reason, then ask for brand, packet values or a label photo |
 | `NOT_FOUND` | 404 | Resource ID missing | Tell user, don't retry |
 | `VALIDATION_FAILED` | 400 | Bad fields | Check field names/types |
 | `DUPLICATE_ERROR` | 409 | Name already exists | Skip, use existing |
 | `INCOMPATIBLE_UNIT` | 400 | Unit wrong for serving_type | Ask user for compatible unit |
 | `PERSON_NOT_FOUND` | 404 | Unknown `--person` name (CLI exit 2, stderr has `known_persons`) | Ask the user to confirm creating them; only then `person add` |
 | `PERSON_LIMIT_REACHED` | 409 | Already four people | Tell the user; do not retry |
-| `INTERNAL_ERROR` | 500 | Unexpected failure | Retry once, then report |
+| `INTERNAL_ERROR` | 500 / per item | Unexpected failure (exit 1) | Retry once, then report |
 
 ---
 
@@ -667,10 +662,10 @@ Delete a meal log (hard delete).
 - [ ] `/nutri_summary` returns today's totals
 - [ ] `/nutri_photo breakfast` with real photo extracts nutrition correctly
 - [ ] `/nutri_log` with saved recipe and custom quantity works
-- [ ] `/nutri_log` with free-text triggers AI estimate flow
-- [ ] `/nutri_log_meal` resolves mixed items (local + OFF + AI) and logs all
-- [ ] `/nutri_log_meal` with all-local items produces no estimation_failures
-- [ ] FOOD_NEEDS_AI_ESTIMATE triggers AI estimation path, not error to user
+- [ ] `/nutri_log` with several items makes one `log` call and reports each item's tier and matched product
+- [ ] An item in none of the databases is logged as an AI estimate ("Estimated by AI (medium confidence)")
+- [ ] A failed item (exit 3) relays the API's reason, and only then asks for brand/packet values/label photo
+- [ ] The agent never calls `food list` or estimates macros itself before logging
 - [ ] `/nutri_recipe save` creates recipe from ingredients
 - [ ] `/nutri_target set` persists target and affects reports
 - [ ] `/nutri_week` shows 7-day trend

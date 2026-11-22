@@ -5,8 +5,8 @@ The `nutri_cli.py` script provides a command-line interface to the Nutrition Tra
 **Exit codes:**
 - `0` — success
 - `1` — unexpected error (e.g., network timeout)
-- `2` — missing prerequisite (e.g., food not found when saving recipe)
-- `3` — AI/OCR failure (e.g., vision model returned invalid JSON)
+- `2` — missing prerequisite (e.g., food not found when saving recipe, unknown person)
+- `3` — AI failure (vision OCR returned invalid JSON, or a `log` item failed on the AI estimate tier)
 
 ---
 
@@ -134,49 +134,43 @@ nutri_cli.py log --meal lunch --recipe "Chicken Salad"
 - `2` — recipe not found
 - `1` — other error
 
-### `log --meal <category> --food "<name>" [--quantity Q --unit U]`
-Log a meal from a single food.
+### `log --meal <category> --name "<food>" --quantity Q --unit U`
+Log food. The API decides where each item's nutrition comes from (your own foods, then Open Food Facts, then an AI estimate run inside nutri-api, else the item fails with a reason). Do not pick a source or search foods first. Calls `POST /meals/log-items`.
+
+Several items in one call: repeat `--item "NAME|QTY|UNIT"` and/or pass `--items-json '[{"name":..,"quantity":..,"unit":..}]'` (up to 20 items; the two forms and `--name` may be combined). A `|` inside NAME is fine because only the last two fields are split off. Quantity must be above 0; unit is one of `g, ml, scoop, item, slice, cup, tsp, tbsp, kg, oz, lb, l`. Not combinable with `--recipe`.
 
 **Examples:**
 ```bash
-nutri_cli.py log --meal breakfast --food "Oats" --quantity 50 --unit g
-nutri_cli.py log --meal snack --food "Banana"
+nutri_cli.py log --meal lunch --name "meat pie" --quantity 1 --unit item
+nutri_cli.py log --meal lunch --item "meat pie|1|item" --item "cola|375|ml"
+nutri_cli.py log --meal lunch --items-json '[{"name":"meat pie","quantity":1,"unit":"item"}]' --person Henry
 ```
 
-**Output:** Same as recipe logging.
-
-**Exit codes:**
-- `0` — success
-- `2` — food not found
-- `1` — other error
-
-### `log --meal <category> --estimate "<free text>"`
-Log a meal with AI estimation from free-text description.
-
-**Examples:**
-```bash
-nutri_cli.py log --meal dinner --estimate "Chicken parmi with fries at the pub"
-```
-
-**Output:**
+**Output:** the API response, printed unchanged:
 ```json
 {
-  "id": 43,
-  "meal_category": "dinner",
-  "source": "ai_estimate",
-  "display_name": "Chicken parmi with fries at the pub",
-  "kcal": "1150.00",
-  "protein_g": "45.00",
-  "fat_g": "52.00",
-  "carbs_g": "120.00",
-  "logged_at": "2026-05-26T19:00:00+10:00"
+  "meal_category": "lunch",
+  "person": "George",
+  "logged_count": 1,
+  "failed_count": 1,
+  "items": [
+    {"name": "meat pie", "status": "logged", "source_tier": "open_food_facts",
+     "matched_food_name": "Meat Pie", "matched_brand": "Mrs Mac's", "meal_id": 51,
+     "kcal": 320.0, "estimated": false, "confidence": null, "notes": [], "error": null},
+    {"name": "mystery", "status": "failed", "source_tier": null, "meal_id": null,
+     "error": {"error": "AIEstimateError", "detail": "...", "code": "AI_NO_RESULT"}}
+  ]
 }
 ```
+`source_tier` is `own_food`, `open_food_facts` or `ai_estimate`.
 
 **Exit codes:**
-- `0` — success
-- `3` — AI model failed or returned invalid response
-- `1` — other error
+- `0` — every item logged
+- `3` — at least one item failed with `AI_NO_RESULT` or `AI_ESTIMATE_FAILED` (JSON still on stdout; the other items were logged)
+- `1` — other failure (network, 5xx, an `INTERNAL_ERROR` item, invalid arguments)
+- `2` — unknown `--person` (`PERSON_NOT_FOUND`, JSON on stderr)
+
+nutri-api needs the OneCLI credential gateway set up for the AI tier; see `docs/operations.md`.
 
 ### `water --ml <int>`
 Log water intake in ml.
