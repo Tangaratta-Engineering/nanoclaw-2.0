@@ -13,6 +13,10 @@ export function validate(req) {
     if (!Array.isArray(req.items) || req.items.length < 1 || req.items.length > 25) return 'items must be 1-25 entries';
     for (const it of req.items) if (!it || !Number.isInteger(it.stockcode) || it.stockcode < 1 || it.stockcode > 99999999) return 'each item needs a numeric stockcode';
   }
+  if (req.op === 'ingredients') {
+    if (!Array.isArray(req.stockcodes) || req.stockcodes.length < 1 || req.stockcodes.length > 10) return 'stockcodes must be 1-10 entries';
+    for (const sc of req.stockcodes) if (!Number.isInteger(sc) || sc < 1 || sc > MAX_OWN_STOCKCODE) return 'each stockcode must be a whole number of up to 8 digits (Marketplace items are not supported)';
+  }
   if (req.op === 'clear' && req.confirm !== true) return 'clear needs confirm: true';
   if (req.op === 'add' || req.op === 'set') {
     if (!Array.isArray(req.items) || req.items.length < 1 || req.items.length > 25) return 'items must be 1-25 entries';
@@ -80,6 +84,22 @@ const detailFn = page(`
 const deleteFn = page(`
   const r = await post('/api/v3/ui/savedlists', { opType: 'UPDATE', id: arg.id, products: arg.rowIds.map((id) => ({ opType: 'DELETE', id })) });
   return { status: r.status };
+`);
+
+// Read-only product detail: ingredient text, declared allergens and claims. Missing or empty fields come back null
+// ("unknown"), never guessed. `allergystatement` is the site's "free from" claims, so it is passed on as a claim
+// only and is for the agent to display, not to treat as evidence.
+const detailProductFn = page(`
+  const r = await fetch('/apis/ui/product/detail/' + arg.stockcode);
+  if (r.status !== 200) return { status: r.status };
+  const j = await r.json();
+  const p = j.Product || {};
+  const a = j.AdditionalAttributes || {};
+  const txt = (v) => { const s = v == null ? '' : String(v).replace(/\\s+/g, ' ').trim(); return s ? s.slice(0, 4000) : null; };
+  const list = (...vs) => [...new Set(vs.flatMap((v) => (v == null ? [] : String(v).split(/[\\n,]/))).map((x) => x.trim()).filter(Boolean))];
+  return { status: 200, name: p.DisplayName || p.Name || null, size: p.PackageSize || null,
+    ingredients: txt(a.ingredients), allergensContain: txt(a.allergencontains), mayContain: txt(a.allergenmaybepresent),
+    freeFrom: txt(a.allergystatement), dietary: list(a.lifestyleclaim, a.lifestyleanddietarystatement) };
 `);
 
 const createFn = page(`
@@ -199,6 +219,19 @@ const dropMarketplace = (r) => {
   return { ...r, items: own, marketplaceHidden: r.items.length - own.length };
 };
 
+/** Ingredient and allergen data for up to 10 products. A product that cannot be read gets its own error entry. */
+async function ingredientsFor(req, inPage) {
+  const items = [];
+  for (const [n, stockcode] of [...new Set(req.stockcodes)].entries()) {
+    if (n) await sleep(300 + Math.random() * 300);
+    const d = await inPage(detailProductFn, { stockcode });
+    if (d.status !== 200) { items.push({ stockcode, error: `product detail failed (HTTP ${d.status})` }); continue; }
+    const { status: _s, ...rest } = d;
+    items.push({ stockcode, ...rest, ingredientsAvailable: !!rest.ingredients });
+  }
+  return { items };
+}
+
 export const ops = {
   async status(_req, inPage) {
     const r = await inPage(listsFn, {});
@@ -211,6 +244,7 @@ export const ops = {
     const l = await findList(req, inPage, false);
     return { list: l.name, ...unwrap(await inPage(showFn, { id: l.id })) };
   },
+  async ingredients(req, inPage) { return ingredientsFor(req, inPage); },
   async add(req, inPage) { return changeQuantities(req, inPage, true); },
   async set(req, inPage) { return changeQuantities(req, inPage, false); },
   async remove(req, inPage) { return removeFromList(req, inPage, req.items.map((i) => i.stockcode)); },

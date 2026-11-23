@@ -134,6 +134,54 @@ test('search and history hide Marketplace items (10-digit codes), count them, an
   assert.ok(validate({ op: 'add', list: 'ok', items: [{ stockcode: 1122348401 }] }));
 });
 
+test('ingredients validation: good input, junk, Marketplace codes, batch cap, empty', () => {
+  assert.equal(validate({ op: 'ingredients', stockcodes: [41285, 72253] }), null);
+  assert.equal(validate({ op: 'ingredients', stockcodes: Array.from({ length: 10 }, (_, i) => i + 1) }), null);
+  assert.ok(validate({ op: 'ingredients', stockcodes: Array.from({ length: 11 }, (_, i) => i + 1) }));
+  assert.ok(validate({ op: 'ingredients', stockcodes: [] }));
+  assert.ok(validate({ op: 'ingredients' }));
+  assert.ok(validate({ op: 'ingredients', stockcodes: ['41285'] }));
+  assert.ok(validate({ op: 'ingredients', stockcodes: ['1; drop'] }));
+  assert.ok(validate({ op: 'ingredients', stockcodes: [0] }));
+  assert.match(validate({ op: 'ingredients', stockcodes: [1122348401] }), /Marketplace/);
+});
+
+const detailPage = (byCode) => async (fn, arg) => {
+  assert.ok(fn.toString().includes('/apis/ui/product/detail/'));
+  return byCode[arg.stockcode];
+};
+
+test('ingredients returns the data, flags missing ingredients, and reports a failed fetch per item', async () => {
+  const inPage = detailPage({
+    1: { status: 200, name: 'Spread 250g', size: '250g', ingredients: 'Vegetable oils, water.', allergensContain: 'Soy', mayContain: null, freeFrom: 'Dairy Free', dietary: ['VEGAN'] },
+    2: { status: 200, name: 'Mystery', size: null, ingredients: null, allergensContain: null, mayContain: null, freeFrom: null, dietary: [] },
+    3: { status: 404 },
+  });
+  const r = await ops.ingredients({ op: 'ingredients', stockcodes: [1, 2, 3, 1] }, inPage);
+  assert.deepEqual(r.items.map((i) => i.stockcode), [1, 2, 3]); // duplicate collapsed
+  assert.equal(r.items[0].ingredientsAvailable, true);
+  assert.equal(r.items[0].ingredients, 'Vegetable oils, water.');
+  assert.equal(r.items[0].allergensContain, 'Soy');
+  assert.equal(r.items[1].ingredientsAvailable, false);
+  assert.equal(r.items[2].error, 'product detail failed (HTTP 404)');
+  assert.ok(!('status' in r.items[0]));
+});
+
+test('the in-page detail reader maps the real response shape and treats empty fields as unknown', async () => {
+  let fn;
+  await ops.ingredients({ op: 'ingredients', stockcodes: [5] }, async (f) => { fn = f; return { status: 404 }; });
+  const fake = async () => ({ status: 200, json: async () => ({
+    Product: { DisplayName: 'Thing 1kg', Name: 'Thing', PackageSize: '1kg' },
+    AdditionalAttributes: { ingredients: '  Wheat  flour ', allergencontains: 'Gluten, Wheat', allergenmaybepresent: null, allergystatement: '',
+      lifestyleclaim: 'VEGAN\nVEGETARIAN', lifestyleanddietarystatement: 'Vegan,Low Sugar' } }) });
+  const saved = globalThis.fetch; globalThis.fetch = fake;
+  try {
+    const d = await fn({ stockcode: 5 });
+    assert.deepEqual(d, { status: 200, name: 'Thing 1kg', size: '1kg', ingredients: 'Wheat flour', allergensContain: 'Gluten, Wheat', mayContain: null,
+      freeFrom: null, dietary: ['VEGAN', 'VEGETARIAN', 'Vegan', 'Low Sugar'] });
+  } finally { globalThis.fetch = saved; }
+});
+
 import { recoverTab } from './recover.mjs';
 
 function recoverDeps({ liveAfterReplace, liveAfterRestart, canRestart = true }) {
