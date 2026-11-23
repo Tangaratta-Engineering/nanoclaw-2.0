@@ -7,6 +7,7 @@ The bridge works inside George's signed-in browser; this tool never sees a passw
 import argparse
 import json
 import os
+import re
 import secrets
 import sys
 import time
@@ -71,7 +72,140 @@ def parse_item(s):
         raise WooliesError(f"'{s}' isn't STOCKCODE or STOCKCODE=QTY")
 
 
-def run(argv, ask=ask):
+MAX_OWN_STOCKCODE = 99999999  # longer codes are Marketplace items (third-party sellers); the bridge refuses them too
+
+
+def own_stockcode(code):
+    if not isinstance(code, int) or code < 1 or code > MAX_OWN_STOCKCODE:
+        raise WooliesError(f"'{code}' isn't a Woolworths stockcode (up to 8 digits; Marketplace items are not supported)")
+    return code
+
+
+# ---- ingredient / allergen checking -------------------------------------------------------------
+# Word groups for --avoid. A term that is not a key here is matched as the literal word itself.
+GROUPS = {
+    "dairy": ["dairy", "milk", "milkfat", "whey", "casein", "caseinate", "lactose", "lactoglobulin", "lactalbumin", "butter",
+              "buttermilk", "butterfat", "cream", "cheese", "curd", "yoghurt", "yogurt", "ghee", "custard"],
+    "egg": ["egg", "albumen", "albumin", "ovalbumin", "ovomucoid", "lysozyme", "meringue"],
+    "gluten": ["gluten", "wheat", "barley", "rye", "oat", "spelt", "kamut", "triticale", "semolina", "couscous", "durum", "malt", "farro", "bulgur"],
+    "peanut": ["peanut", "groundnut", "arachis"],
+    "treenut": ["nut", "almond", "cashew", "hazelnut", "walnut", "pecan", "pistachio", "macadamia", "brazil nut", "pine nut", "chestnut",
+                "praline", "marzipan", "tree nut"],
+    "soy": ["soy", "soya", "soybean", "edamame", "tofu", "tempeh", "miso"],
+    "sesame": ["sesame", "tahini"],
+    "fish": ["fish", "anchovy", "anchovies", "salmon", "tuna", "cod", "barramundi"],
+    "shellfish": ["shellfish", "crustacean", "prawn", "shrimp", "crab", "lobster", "crayfish", "krill", "mollusc", "mollusk", "oyster",
+                  "mussel", "scallop", "squid", "clam"],
+}
+GROUPS["nuts"] = GROUPS["treenut"] + GROUPS["peanut"]  # "nut-free" in practice means no peanuts either
+ALIASES = {"milk": "dairy", "lactose": "dairy", "egg": "egg", "eggs": "egg", "wheat": "gluten", "nut": "nuts", "nuts": "nuts",
+           "treenut": "treenut", "treenuts": "treenut", "peanuts": "peanut", "soya": "soy", "crustacean": "shellfish",
+           "crustaceans": "shellfish", "molluscs": "shellfish"}
+
+# Phrases that contain a trigger word but are not that allergen. Only applied to the group named, so for example
+# "soy milk" is hidden from a dairy check but still found by a soy check. "X free" statements are never a mention.
+EXCLUSIONS = {
+    "dairy": ["cocoa butter", "peanut butter", "nut butter", "almond butter", "cashew butter", "shea butter", "coconut cream",
+              "coconut milk", "almond milk", "soy milk", "soya milk", "oat milk", "rice milk", "cream of tartar", "milk thistle",
+              "dairy free", "lactose free", "milk free", "no dairy", "non dairy", "non-dairy"],
+    "egg": ["egg free", "eggplant", "no egg"],
+    "gluten": ["gluten free", "wheat free", "no gluten", "oat milk"],
+    "peanut": ["peanut free", "nut free", "no peanut"],
+    "treenut": ["nut free", "tree nut free", "no nuts", "peanut butter", "butternut", "water chestnut", "water chestnuts"],
+    "soy": ["soy free", "soya free", "no soy"],
+    "sesame": ["sesame free"],
+    "fish": ["fish free", "no fish", "fish free"],
+    "shellfish": ["shellfish free", "no shellfish"],
+}
+EXCLUSIONS["nuts"] = EXCLUSIONS["treenut"] + [e for e in EXCLUSIONS["peanut"] if e not in EXCLUSIONS["treenut"]]
+# Text after these markers is a "may contain" statement rather than an ingredient.
+MAY_RE = re.compile(r"\b(may\s+contain|may\s+be\s+present|contains?\s+traces|traces\s+of|produced\s+in\s+a|made\s+(?:in|on)\s+(?:a|shared)|manufactured\s+(?:in|on)\s+(?:a|shared))", re.I)
+
+
+def _word(term, tolerant=True):
+    """Regex for one whole word or phrase. The site's ingredient text has stray spaces inside words ("conta ining"),
+    so longer words may have one optional space between any two letters. Spaces in a phrase match any run of spaces."""
+    parts = []
+    for w in re.split(r"[\s-]+", term.strip().lower()):
+        letters = [re.escape(c) for c in w]
+        parts.append((r"\s?".join(letters) if tolerant and len(w) > 3 else "".join(letters)))
+    return r"\b" + r"[\s-]+".join(parts) + r"(?:e?s)?\b"
+
+
+def _canon(term):
+    t = re.sub(r"[\s_-]+", "", term.strip().lower())
+    return ALIASES.get(t, t)
+
+
+def expand_terms(avoid):
+    """[(user term, group key or None, [words])] for the comma list given to --avoid."""
+    out = []
+    for raw in avoid.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        key = _canon(raw)
+        if key in GROUPS:
+            out.append((raw, key, GROUPS[key]))
+        else:
+            out.append((raw, None, [raw.lower()]))
+    if not out:
+        raise WooliesError("--avoid needs at least one term, e.g. --avoid dairy,egg")
+    return out
+
+
+def find_matches(text, terms):
+    """Matches of the avoid terms in text: [{'term', 'word', 'fragment'}], at most one per (term, word)."""
+    if not text:
+        return []
+    hits = []
+    for raw, key, words in terms:
+        masked = text
+        for phrase in EXCLUSIONS.get(key, []):
+            masked = re.sub(_word(phrase), lambda m: "#" * len(m.group(0)), masked, flags=re.I)
+        for word in words:
+            m = re.search(_word(word), masked, re.I)
+            if m:
+                a, b = max(0, m.start() - 30), min(len(text), m.end() + 30)
+                frag = ("..." if a else "") + text[a:b].strip() + ("..." if b < len(text) else "")
+                hits.append({"term": raw, "word": text[m.start():m.end()], "fragment": frag})
+    return hits
+
+
+def check_product(p, terms):
+    """Verdict for one product from the `ingredients` op: ('clear'|'blocked'|'unknown', [reasons])."""
+    if p.get("error"):
+        return "unknown", [f"couldn't read the product page ({p['error']})"]
+    ing = p.get("ingredients") or ""
+    split = MAY_RE.search(ing)
+    main, maybe = (ing[:split.start()], ing[split.start():]) if split else (ing, "")
+    reasons = []
+    for where, text, may in (("ingredients", main, False), ("declared allergens", p.get("allergensContain"), False),
+                             ("'may contain' statement", " ".join(x for x in (maybe, p.get("mayContain")) if x), True)):
+        for h in find_matches(text, terms):
+            reasons.append(f"{'MAY CONTAIN ' if may else 'contains '}'{h['word']}' (avoiding {h['term']}) in {where}: \"{h['fragment']}\"")
+    if reasons:
+        return "blocked", reasons
+    if not ing:
+        return "unknown", ["no ingredient list on the site, so it can't be verified"]
+    return "clear", []
+
+
+def fmt_ingredients(p):
+    if p.get("error"):
+        return f"{p['stockcode']}: ERROR {p['error']}"
+    lines = [f"{p['stockcode']} | {p.get('name') or ''} | {p.get('size') or ''}"]
+    lines.append(f"  ingredients: {p['ingredients']}" if p.get("ingredients") else "  ingredients: NOT AVAILABLE")
+    lines.append(f"  declared allergens (contains): {p.get('allergensContain') or 'none listed'}")
+    lines.append(f"  may be present: {p.get('mayContain') or 'none listed'}")
+    if p.get("dietary"):
+        lines.append("  dietary/lifestyle claims (the site's labels): " + ", ".join(p["dietary"]))
+    if p.get("freeFrom"):
+        lines.append("  'free from' claims (the site's labels, NOT proof): " + p["freeFrom"])
+    return "\n".join(lines)
+
+
+def _run(argv, ask=ask):
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status", help="is the server's Woolworths login working?")
@@ -84,6 +218,11 @@ def run(argv, ask=ask):
     s.add_argument("--list", default=DEFAULT_LIST)
     s = sub.add_parser("add", help="ADD products (STOCKCODE or STOCKCODE=QTY) to a list: the quantity is added to what is already there; creates the list if missing")
     s.add_argument("--list", default=DEFAULT_LIST); s.add_argument("items", nargs="+")
+    s.add_argument("--avoid", help="comma list of things this must NOT contain, e.g. dairy,egg,gluten,nuts,peanut,soy,sesame,fish,shellfish "
+                   "(or any word): the ingredients are checked first and products that match are NOT added")
+    s.add_argument("--allow-unknown", action="store_true", help="with --avoid: still add products whose ingredient list the site doesn't show")
+    s = sub.add_parser("ingredients", help="ingredients, declared allergens and claims for products (STOCKCODE ...)")
+    s.add_argument("stockcodes", nargs="+")
     s = sub.add_parser("set", help="make the list hold exactly this quantity of each product (STOCKCODE=QTY)")
     s.add_argument("--list", default=DEFAULT_LIST); s.add_argument("items", nargs="+")
     s = sub.add_parser("remove", help="take products (STOCKCODE ...) off the NanoClaw list")
@@ -92,6 +231,9 @@ def run(argv, ask=ask):
     s.add_argument("--yes", action="store_true", help="George has asked for the list to be cleared")
     a = ap.parse_args(argv)
     try:
+        if a.cmd == "ingredients":
+            codes = [own_stockcode(parse_item(c)["stockcode"]) for c in a.stockcodes]
+            return "\n".join(fmt_ingredients(p) for p in ask({"op": "ingredients", "stockcodes": codes})["items"])
         if a.cmd == "status":
             d = ask({"op": "status"})
             return "Signed in to Woolworths." if d["signedIn"] else "NOT signed in: George needs to sign in to the server's browser again."
@@ -129,6 +271,8 @@ def run(argv, ask=ask):
                 raise WooliesError("clear empties the whole list: only run it with --yes after George has asked you to clear or empty it")
             d = ask({"op": "clear", "list": DEFAULT_LIST, "confirm": True})
             return f"Cleared the Woolworths list '{d['list']}': removed {len(d['removed'])} item(s)."
+        if a.cmd == "add" and a.avoid:
+            return add_checked(a, ask)
         if a.cmd in ("add", "set"):
             d = ask({"op": a.cmd, "list": a.list, "create": a.list == DEFAULT_LIST, "items": [parse_item(i) for i in a.items]})
             lines = []
@@ -144,5 +288,53 @@ def run(argv, ask=ask):
         raise SystemExit(1)
 
 
+def run_with_status(argv, ask=ask):
+    """(text, exit status): add --avoid exits 1 when it withheld something; everything else is 0."""
+    r = _run(argv, ask)
+    return r if isinstance(r, tuple) else (r, 0)
+
+
+def run(argv, ask=ask):
+    return run_with_status(argv, ask)[0]
+
+
+def add_checked(a, ask):
+    """add --avoid: check each product's ingredients first; add only the clear ones. Exit status 1 if any was withheld."""
+    terms = expand_terms(a.avoid)
+    items = [parse_item(i) for i in a.items]
+    for i in items:
+        own_stockcode(i["stockcode"])
+    data = ask({"op": "ingredients", "stockcodes": list(dict.fromkeys(i["stockcode"] for i in items))})["items"]
+    info = {p["stockcode"]: p for p in data}
+    ok, lines, withheld = [], [], 0
+    for i in items:
+        p = info.get(i["stockcode"]) or {"stockcode": i["stockcode"], "error": "no data returned"}
+        label = f"{p['stockcode']} {p.get('name') or ''}".strip()
+        verdict, reasons = check_product(p, terms)
+        if verdict == "unknown" and a.allow_unknown:
+            lines.append(f"Adding {label} WITHOUT a check (--allow-unknown): " + "; ".join(reasons))
+            ok.append(i)
+        elif verdict == "clear":
+            ok.append(i)
+        else:
+            withheld += 1
+            head = "NOT ADDED (can't verify)" if verdict == "unknown" else "NOT ADDED"
+            lines.append(f"{head}: {label}: " + "; ".join(reasons))
+    out = list(lines)
+    if ok:
+        d = ask({"op": "add", "list": a.list, "create": a.list == DEFAULT_LIST, "items": ok})
+        for r in d.get("results", []):
+            label = f"{r['stockcode']} {r.get('name') or ''}".strip()
+            out.append(f"On the Woolworths list '{d['list']}': x{r['quantity']} {label}" if r.get("quantity") else f"NOT confirmed on the list yet: {label}")
+        if d["failed"]:
+            out.append("FAILED: " + ", ".join(f"{x['stockcode']} (HTTP {x['status']})" for x in d["failed"]))
+    else:
+        out.append("Nothing was added.")
+    out.append(f"Checked against: {a.avoid}. Site data can be out of date: George should still read the label on the pack.")
+    return "\n".join(out), (1 if withheld else 0)
+
+
 if __name__ == "__main__":
-    print(run(sys.argv[1:]))
+    text, code = run_with_status(sys.argv[1:])
+    print(text)
+    sys.exit(code)
